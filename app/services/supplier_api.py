@@ -43,10 +43,6 @@ EXPECTED_SHAPES: dict[str, Any] = {
         "client_id": 70123, "name": 'MCHJ "Taminot Trade"', "phone": "998901234567",
         "status": "Фаол таъминотчи", "registered_at": "2025-03-14",
     },
-    "getSupplierInfo": {
-        "supplier_id": 70123, "name": 'MCHJ "Taminot Trade"',
-        "balance": 12500000, "as_of": "2026-08-20T12:00:00",
-    },
     "getBalance": {"balance": 12500000, "currency": "UZS", "as_of": "2026-08-20T12:00:00"},
     "getPayments": [{
         "payment_id": 90101, "doc_number": "TL-260812-101", "date": "2026-08-12",

@@ -82,7 +82,26 @@ Bugungi kunda tayyor va botga ulangan (MX-Client-Bot bilan umumiy, `hs/client_bo
 | Bonus `kind` | `accrued` | hisoblangan |
 | | `used` | foydalanilgan |
 | Qaytarish `reason_code` | `expiry` · `damaged` · `excess` · `other` | muddat · shikast · ortiqcha · boshqa |
-| `source` | `telegram_bot` | so'rov qayerdan kelgani |
+| `source` | `telegram_bot` | so'rov Telegram botdan keldi |
+| | `webapp` | so'rov WebApp (Mini App / brauzer kabineti) dan keldi |
+
+### 0.5 Bot javobni qanday o'qiydi (muhim!)
+
+Bot javobga bardoshli, lekin **standart qiymatlari** bor — 1C maydonni tushirib qoldirsa nima bo'lishini bilib qo'ying:
+
+| Holat | Bot nima qiladi |
+|---|---|
+| To'lovda `status` yo'q yoki notanish | **`confirmed`** deb hisoblaydi (tasdiqlash tugmasi chiqmaydi!) — `pending` ni doim aniq yuboring |
+| Qaytarishda `status` yo'q yoki notanish | **`pending`** deb hisoblaydi (tasdiqlash tugmasi chiqadi) |
+| `method` yo'q yoki notanish | `other` → foydalanuvchiga «Бошқа» deb ko'rsatiladi |
+| Hujjatda `total` yo'q | `products[].sum` yig'indisi hisoblanadi |
+| Tovarda `sum` yo'q | `price × qty` hisoblanadi |
+| Sana formati boshqacha | `YYYY-MM-DD`, `DD.MM.YYYY`, `YYYYMMDD` va ISO datetime qabul qilinadi |
+| Ro'yxat o'ralgan bo'lsa (`{"items": [...]}`) | `items` / `data` / `list` / `rows` kalitlari ochib olinadi (lekin **o'ramsiz ro'yxat** afzal) |
+| Obyekt bitta elementli ro'yxatda kelsa (`[{…}]`) | ochib olinadi |
+| Hujjatda ko'rsatilmagan qo'shimcha maydonlar | e'tiborsiz qoldiriladi — javobga qo'shimcha maydon qo'shish xavfsiz |
+
+> Javob shakli umuman mos kelmasa (masalan ro'yxat o'rniga obyekt) bot uni «endpoint tayyor emas» deb hisoblaydi va `/panel/api-logs` da kutilgan shakl bilan yonma-yon ko'rsatadi.
 
 ---
 
@@ -103,7 +122,7 @@ Content-Type: application/json
 |---|---|---|---|
 | `phoneNumber` | number | ha | `+`, bo'shliq va chiziqchasiz, `998` bilan boshlanadi |
 | `chatID` | string | ha | Telegram chat/user id — 1C taminotchi kartochkasiga yozib qo'yadi (keyin xabar yuborish uchun) |
-| `botID` | number | ha | admin paneldagi bot raqami — bitta 1C bazasiga bir nechta bot ulanganda taminotchi qaysi bot orqali kirganini aniqlash uchun. 1C uni kartochkaga saqlab, keyin push'larda qaytaradi |
+| `botID` | number | ha | admin paneldagi bot raqami — bitta 1C bazasiga bir nechta bot ulanganda taminotchi qaysi bot orqali kirganini aniqlash uchun. 1C uni kartochkaga saqlaydi (keyinchalik 1C → bot xabarlari kelishilganda ham shu raqam ishlatiladi) |
 
 ### Javob 200
 ```json
@@ -116,6 +135,12 @@ Content-Type: application/json
 | `name` | string | taminotchi nomi — salomlashishda va kabinetda ko'rsatiladi |
 
 Topilmasa: `404` + `SUPPLIER_NOT_FOUND` (yoki bo'sh `{}` — bot ikkalasini ham "topilmadi" deb qabul qiladi).
+
+Xuddi shu so'rov **WebApp** dagi ro'yxatdan o'tishda ham yuboriladi (`botID` bilan birga) — 1C tomonida farqi yo'q.
+
+**Legacy fallback:** `checkNumber` `404` qaytarsa, bot bir marta eski manzilga uradi:
+`POST /hs/client/api/device` — tanasi `{"phone_number": <int>, "chat_id": "<str>"}` (bu yerda `botID` yo'q).
+Yangi bazalarda bu kerak emas — faqat eski o'rnatmalar bilan mos kelish uchun saqlangan.
 
 > **Diqqat:** shu raqam mijoz sifatida ham ro'yxatda bo'lsa, bu bot uchun **taminotchi** sifatida tekshirilishi kerak. Agar bitta `checkNumber` ikkala rolni ham qaytarsa, 1C tomonida taminotchi ekanini ajratib berish kerak bo'ladi (kelishiladi).
 
@@ -310,7 +335,7 @@ POST /hs/supplier_bot/api/confirmPayment
 | `supplier_id` | id | ha | boshqa taminotchining to'lovi bo'lsa → `404 PAYMENT_NOT_FOUND` |
 | `payment_id` | id | ha | `getPayments` dagi kod |
 | `chat_id` | string | yo'q | kim tasdiqlagani (Telegram id) — auditlash uchun |
-| `source` | enum | yo'q | `telegram_bot` |
+| `source` | enum | yo'q | `telegram_bot` (botdan) yoki `webapp` (Mini App / brauzer kabinetidan) — 1C qaysi kanaldan tasdiqlanganini qayd etsin |
 
 #### Javob 200
 ```json
@@ -394,7 +419,7 @@ POST /hs/supplier_bot/api/confirmReturn
 | `supplier_id` | id | ha | boshqa taminotchiniki bo'lsa → `404 RETURN_NOT_FOUND` |
 | `return_id` | id | ha | |
 | `chat_id` | string | yo'q | auditlash uchun |
-| `source` | enum | yo'q | `telegram_bot` |
+| `source` | enum | yo'q | `telegram_bot` (botdan) yoki `webapp` (Mini App / brauzer kabinetidan) — 1C qaysi kanaldan tasdiqlanganini qayd etsin |
 
 #### Javob 200
 ```json
@@ -484,7 +509,7 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 |---|---|---|
 | `supplier_id` | id | taminotchi kodi |
 | `name` | string | taminotchi nomi — PDF sarlavhasida |
-| `date_from` / `date_to` | date | so'ralgan davr (aks-sado) |
+| `date_from` / `date_to` | date | so'ralgan davr (aks-sado; berilmasa bot so'rovdagi sanalarni ishlatadi) |
 | `opening_balance` | money | davr boshidagi qoldiq (taminotchi foydasiga musbat) |
 | `total_debit` | money | davr ichida yuk berilishi (kompaniya qarzi oshishi) — `rows[].debit` yig'indisi |
 | `total_credit` | money | to'lovlar va qaytarishlar — `rows[].credit` yig'indisi |
@@ -515,6 +540,10 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 | `getBonuses` | `supplier_bot` | `get_bonuses` | 🎁 Бонуслар, 👤 Кабинет |
 | `getAktSverka` | `supplier_bot` | `get_akt_sverka` | 📄 Акт сверка (+ PDF) |
 
+> **Bitta hujjat uchun alohida endpoint kerak emas:** hujjat tafsiloti (to'lov / yuk / qaytarish detallari) ro'yxat javobidan olinadi — bot `getPayments` / `getShipments` / `getReturns` natijasidan kerakli `*_id` ni o'zi filtrlaydi. Shuning uchun ro'yxat javobida **barcha** maydonlar (jumladan `products[]`) to'liq bo'lishi kerak.
+>
+> Har bir bo'lim bot va WebApp da bir xil ishlaydi — ikkalasi ham shu endpointlarga murojaat qiladi, farqi faqat tasdiqlashdagi `source` maydonida.
+
 ---
 
 ## 10. 1C jamoasi uchun tekshiruv ro'yxati
@@ -522,7 +551,9 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 - [ ] Yangi endpointlar `hs/supplier_bot/api/` ostida, Basic Auth bilan; noto'g'ri parol → `401`
 - [ ] Javoblar UTF-8 JSON; sanalar `YYYY-MM-DD`; summalar **son** (string emas); bo'sh ro'yxat `[]`
 - [ ] Har bir so'rovda `supplier_id` tekshiriladi: boshqa taminotchi hujjati so'ralsa → `404` (TZ 4)
-- [ ] `confirmPayment` / `confirmReturn` idempotent va 1C da qayd etiladi: kim (`chat_id`), qachon, qaysi kanaldan (`source`) (TZ 3)
+- [ ] `checkNumber` tanasidagi `botID` qabul qilinadi va taminotchi kartochkasiga saqlanadi (1-bo'lim)
+- [ ] To'lovlarda `status` **doim aniq** yuboriladi — bo'lmasa bot uni `confirmed` deb qabul qiladi va tasdiqlash tugmasi chiqmaydi (0.5-bo'lim)
+- [ ] `confirmPayment` / `confirmReturn` idempotent va 1C da qayd etiladi: kim (`chat_id`), qachon, qaysi kanaldan (`source`: `telegram_bot` / `webapp`) (TZ 3)
 - [ ] `getBalance.balance` = joriy sanagacha `getAktSverka.closing_balance`
 - [ ] `getAktSverka`: `closing = opening + total_debit − total_credit`; `rows` sana bo'yicha o'sish tartibida; qatorda `debit`/`credit` dan faqat bittasi > 0
 - [ ] `getBonuses`: `remaining = accrued − used`
