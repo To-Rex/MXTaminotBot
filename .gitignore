@@ -1,0 +1,39 @@
+# Maxfiy ma'lumotlar
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+venv/
+.venv/
+
+# Ma'lumotlar bazasi (bot tokenlari va 1C parollari shu yerda — hech qachon commit qilinmasin)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Git tarixi zaxirasi (MXClientBot dan qolgan)
+.git_mxclientbot_backup/
+
+# Eski buzuq virtual muhit
+venv_old_broken/
+
+# Graphify chiqishi (lokal tahlil)
+graphify-out/
+
+# Claude
+.claude/settings.local.json
