@@ -748,7 +748,29 @@ def create_router(
     # ════════════════════════════════════════════════════════════════════
     # 7. 📄 АКТ СВЕРКА (TZ 2.6)
     # ════════════════════════════════════════════════════════════════════
-    def _akt_period_kb(lang: str) -> InlineKeyboardMarkup:
+    CUR_ICON = {"UZS": "🇺🇿", "USD": "💵", "EUR": "💶", "RUB": "🇷🇺"}
+
+    def _cry_token(name: str) -> str:
+        """Callback_data uchun xavfsiz valyuta belgisi (faqat harflar)."""
+        return "".join(ch for ch in (name or "UZS").upper() if ch.isalpha())[:6] or "UZS"
+
+    async def _akt_currencies() -> list[dict]:
+        """getcry ro'yxati. 1C da tayyor bo'lmasa — bo'sh ro'yxat (valyuta tanlash
+        o'tkazib yuboriladi, akt eskicha ishlayveradi)."""
+        try:
+            return await svc.get_currencies(*creds)
+        except (ServiceUnavailable, SupplierError) as e:
+            logger.warning("akt: valyutalar ro'yxati olinmadi (%s) — tanlovsiz davom etamiz", e)
+            return []
+
+    def _akt_currency_kb(currencies: list[dict]) -> InlineKeyboardMarkup:
+        rows = [[InlineKeyboardButton(
+            text=f"{CUR_ICON.get(c['name'], '💱')} {c['name']}",
+            callback_data=f"aktcur_{c['id']}_{_cry_token(c['name'])}",
+        )] for c in currencies]
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _akt_period_kb(lang: str, cid: int, cname: str, many: bool) -> InlineKeyboardMarkup:
         today = date.today()
         m_start = today.replace(day=1)
         pm_end = m_start - timedelta(days=1)
@@ -757,19 +779,39 @@ def create_router(
         y_start = today.replace(month=1, day=1)
 
         def cb(d1: date, d2: date) -> str:
-            return f"akt_{d1.isoformat()}_{d2.isoformat()}"
+            return f"aktper_{cid}_{cname}_{d1.isoformat()}_{d2.isoformat()}"
 
-        return InlineKeyboardMarkup(inline_keyboard=[
+        rows = [
             [InlineKeyboardButton(text=t(lang, "period_this_month"), callback_data=cb(m_start, today)),
              InlineKeyboardButton(text=t(lang, "period_prev_month"), callback_data=cb(pm_start, pm_end))],
             [InlineKeyboardButton(text=t(lang, "period_3m"), callback_data=cb(m3_start, today)),
              InlineKeyboardButton(text=t(lang, "period_year"), callback_data=cb(y_start, today))],
-            [InlineKeyboardButton(text=t(lang, "period_custom"), callback_data="akt_custom")],
-        ])
+            [InlineKeyboardButton(text=t(lang, "period_custom"), callback_data=f"aktcustom_{cid}_{cname}")],
+        ]
+        if many:
+            rows.append([InlineKeyboardButton(text=t(lang, "btn_akt_currency"), callback_data="aktmenu")])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    async def _show_akt_period_menu(target: Message, lang: str, cid: int, cname: str,
+                                    many: bool, edit: bool = False):
+        text = t(lang, "akt_title") + "\n\n"
+        if cname and cid:
+            text += f"💱 <b>{t(lang, 'akt_currency')}:</b> {cname}\n\n"
+        text += t(lang, "akt_choose_period")
+        await _answer_or_edit(target, text, _akt_period_kb(lang, cid, cname, many), edit=edit)
 
     async def _show_akt_menu(target: Message, lang: str, edit: bool = False):
-        text = t(lang, "akt_title") + "\n\n" + t(lang, "akt_choose_period")
-        await _answer_or_edit(target, text, _akt_period_kb(lang), edit=edit)
+        """Kirish nuqtasi: valyuta tanlash (bitta valyuta bo'lsa — to'g'ridan-to'g'ri davr)."""
+        currencies = await _akt_currencies()
+        if len(currencies) == 1:
+            c = currencies[0]
+            await _show_akt_period_menu(target, lang, c["id"], _cry_token(c["name"]), False, edit)
+            return
+        if not currencies:  # getcry tayyor emas — eskicha, valyutasiz
+            await _show_akt_period_menu(target, lang, 0, "", False, edit)
+            return
+        text = t(lang, "akt_title") + "\n\n" + t(lang, "akt_choose_currency")
+        await _answer_or_edit(target, text, _akt_currency_kb(currencies), edit=edit)
 
     @router.message(F.text.in_(_both("btn_akt")))
     async def akt_handler(message: Message, state: FSMContext):
@@ -779,7 +821,7 @@ def create_router(
         await state.clear()
         await _show_akt_menu(message, lang)
 
-    @router.callback_query(F.data == "akt_menu")
+    @router.callback_query(F.data == "aktmenu")
     async def akt_menu_callback(callback: CallbackQuery, state: FSMContext):
         supplier_id, lang = await _supplier_from_callback(callback)
         if not supplier_id:
@@ -788,14 +830,27 @@ def create_router(
         await callback.answer()
         await _show_akt_menu(callback.message, lang, edit=True)
 
+    @router.callback_query(F.data.startswith("aktcur_"))
+    async def akt_currency_callback(callback: CallbackQuery, state: FSMContext):
+        supplier_id, lang = await _supplier_from_callback(callback)
+        if not supplier_id:
+            return
+        _, cid, cname = callback.data.split("_", 2)
+        await state.clear()
+        await callback.answer()
+        await _show_akt_period_menu(callback.message, lang, int(cid), cname, True, edit=True)
+
     def _akt_text(lang: str, akt: dict) -> str:
-        lines = [
-            t(lang, "akt_title"), "",
+        cur = akt.get("currency") or "UZS"
+        lines = [t(lang, "akt_title"), ""]
+        if akt.get("cry_id"):
+            lines.append(f"💱 <b>{t(lang, 'akt_currency')}:</b> {cur}")
+        lines += [
             f"📅 <b>{t(lang, 'akt_period')}:</b> {fmt_date(akt['date_from'])} — {fmt_date(akt['date_to'])}",
-            f"▪️ <b>{t(lang, 'akt_opening')}:</b> {fmt_money(akt['opening_balance'])}",
-            f"➕ <b>{t(lang, 'akt_debit')}:</b> {fmt_money(akt['total_debit'])}",
-            f"➖ <b>{t(lang, 'akt_credit')}:</b> {fmt_money(akt['total_credit'])}",
-            f"💳 <b>{t(lang, 'akt_closing')}:</b> {fmt_money(akt['closing_balance'])}",
+            f"▪️ <b>{t(lang, 'akt_opening')}:</b> {fmt_amount(akt['opening_balance'], cur)}",
+            f"➕ <b>{t(lang, 'akt_debit')}:</b> {fmt_amount(akt['total_debit'], cur)}",
+            f"➖ <b>{t(lang, 'akt_credit')}:</b> {fmt_amount(akt['total_credit'], cur)}",
+            f"💳 <b>{t(lang, 'akt_closing')}:</b> {fmt_amount(akt['closing_balance'], cur)}",
             "",
         ]
         rows = akt["rows"]
@@ -804,30 +859,35 @@ def create_router(
         else:
             lines.append(f"<b>{t(lang, 'akt_rows')}:</b>")
             for r in rows[:AKT_ROWS_LIMIT]:
-                amount = f"+{fmt_money(r['debit'])}" if r["debit"] else f"−{fmt_money(r['credit'])}"
-                lines.append(f"• {fmt_date(r['date'])} • {r['doc']} • {r['note']} — <b>{amount}</b>")
+                val = (f"+{fmt_amount(r['debit'], cur)}" if r["debit"]
+                       else f"−{fmt_amount(r['credit'], cur)}")
+                lines.append(f"• {fmt_date(r['date'])} • {r['doc']} • {r['note']} — <b>{val}</b>")
             if len(rows) > AKT_ROWS_LIMIT:
                 lines.append(t(lang, "akt_more_rows", n=len(rows) - AKT_ROWS_LIMIT))
         return "\n".join(lines)
 
-    def _akt_kb(lang: str, d1: date, d2: date) -> InlineKeyboardMarkup:
+    def _akt_kb(lang: str, cid: int, cname: str, d1: date, d2: date) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=t(lang, "btn_akt_pdf"),
-                                  callback_data=f"aktpdf_{d1.isoformat()}_{d2.isoformat()}")],
-            [InlineKeyboardButton(text=t(lang, "btn_akt_period"), callback_data="akt_menu")],
+                                  callback_data=f"aktpdf_{cid}_{cname}_{d1.isoformat()}_{d2.isoformat()}")],
+            [InlineKeyboardButton(text=t(lang, "btn_akt_period"),
+                                  callback_data=f"aktcur_{cid}_{cname}" if cid else "aktmenu")],
         ])
 
-    async def _show_akt(target: Message, supplier_id: str, lang: str,
+    async def _show_akt(target: Message, supplier_id: str, lang: str, cid: int, cname: str,
                         d1: date, d2: date, edit: bool = False):
-        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2)
-        await _answer_or_edit(target, _akt_text(lang, akt), _akt_kb(lang, d1, d2), edit=edit)
+        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2,
+                                       cry_id=cid or None, currency=cname or "UZS")
+        await _answer_or_edit(target, _akt_text(lang, akt), _akt_kb(lang, cid, cname, d1, d2), edit=edit)
 
-    @router.callback_query(F.data == "akt_custom")
+    @router.callback_query(F.data.startswith("aktcustom_"))
     async def akt_custom_callback(callback: CallbackQuery, state: FSMContext):
         supplier_id, lang = await _supplier_from_callback(callback)
         if not supplier_id:
             return
+        _, cid, cname = callback.data.split("_", 2)
         await state.set_state(AktState.waiting_period)
+        await state.update_data(akt_cid=int(cid), akt_cname=cname)
         await callback.answer()
         await callback.message.answer(t(lang, "akt_custom_prompt"), reply_markup=cancel_keyboard(lang))
 
@@ -858,47 +918,52 @@ def create_router(
             return
         if d1 > d2:
             d1, d2 = d2, d1
+        data = await state.get_data()
+        cid, cname = int(data.get("akt_cid") or 0), str(data.get("akt_cname") or "")
         await state.clear()
         await message.answer(t(lang, "menu_title"), reply_markup=main_menu_keyboard(lang))
-        await _show_akt(message, supplier_id, lang, d1, d2)
+        await _show_akt(message, supplier_id, lang, cid, cname, d1, d2)
 
     @router.callback_query(F.data.startswith("aktpdf_"))
     async def akt_pdf_callback(callback: CallbackQuery):
         supplier_id, lang = await _supplier_from_callback(callback)
         if not supplier_id:
             return
-        _, d1s, d2s = callback.data.split("_")
+        _, cid, cname, d1s, d2s = callback.data.split("_")
         d1, d2 = date.fromisoformat(d1s), date.fromisoformat(d2s)
         await callback.answer("📄 …")
-        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2)
+        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2,
+                                       cry_id=int(cid) or None, currency=cname or "UZS")
         try:
             pdf_bytes = build_akt_pdf(akt, lang)
         except Exception as e:
             logger.error("akt pdf failed: %s", e, exc_info=True)
             await callback.message.answer(t(lang, "akt_pdf_failed"))
             return
-        filename = f"akt_sverka_{d1.isoformat()}_{d2.isoformat()}.pdf"
+        suffix = f"_{cname}" if cname else ""
+        filename = f"akt_sverka{suffix}_{d1.isoformat()}_{d2.isoformat()}.pdf"
         await callback.message.answer_document(
             BufferedInputFile(pdf_bytes, filename=filename),
             caption=t(lang, "akt_pdf_caption", date_from=fmt_date(d1), date_to=fmt_date(d2)),
         )
 
-    @router.callback_query(F.data.startswith("akt_"))
+    @router.callback_query(F.data.startswith("aktper_"))
     async def akt_period_callback(callback: CallbackQuery):
         supplier_id, lang = await _supplier_from_callback(callback)
         if not supplier_id:
             return
-        parts = callback.data.split("_")  # akt_<from>_<to>
-        if len(parts) != 3:
+        parts = callback.data.split("_")  # aktper_<cid>_<cname>_<from>_<to>
+        if len(parts) != 5:
             await callback.answer()
             return
         try:
-            d1, d2 = date.fromisoformat(parts[1]), date.fromisoformat(parts[2])
+            cid, cname = int(parts[1]), parts[2]
+            d1, d2 = date.fromisoformat(parts[3]), date.fromisoformat(parts[4])
         except ValueError:
             await callback.answer()
             return
         await callback.answer()
-        await _show_akt(callback.message, supplier_id, lang, d1, d2, edit=True)
+        await _show_akt(callback.message, supplier_id, lang, cid, cname, d1, d2, edit=True)
 
     # ── 1C service errors → friendly messages (one place for all handlers) ─
     async def _reply_error(event: ErrorEvent, key: str, message_text: str = "", alert: bool = False):

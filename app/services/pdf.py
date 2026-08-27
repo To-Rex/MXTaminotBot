@@ -55,8 +55,15 @@ def _find_font(candidates: list[str]) -> Optional[str]:
     return None
 
 
-def _fmt_money(v: float) -> str:
-    return f"{float(v or 0):,.0f}".replace(",", " ")
+def _fmt_money(v: float, currency: str = "UZS") -> str:
+    """Summa. UZS — butun songacha, boshqa valyutalarda sent ko'rsatiladi."""
+    val = float(v or 0)
+    cur = (currency or "UZS").upper()
+    if cur in ("UZS", ""):
+        return f"{val:,.0f}".replace(",", " ")
+    has_cents = abs(val - int(val)) > 0.004
+    text = f"{val:,.2f}" if has_cents else f"{val:,.0f}"
+    return text.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", " ")
 
 
 def _fmt_date(d) -> str:
@@ -76,6 +83,7 @@ _LABELS = {
         "date": "Сана", "doc": "Ҳужжат", "note": "Изоҳ",
         "debit": "Дебет", "credit": "Кредит",
         "total": "Жами айланма",
+        "currency": "Валюта",
         "sum": "сўм",
     },
     "ru": {
@@ -88,6 +96,7 @@ _LABELS = {
         "date": "Дата", "doc": "Документ", "note": "Примечание",
         "debit": "Дебет", "credit": "Кредит",
         "total": "Итого обороты",
+        "currency": "Валюта",
         "sum": "сум",
     },
 }
@@ -96,6 +105,10 @@ _LABELS = {
 def build_akt_pdf(akt: dict, lang: str = "uz") -> bytes:
     """akt — SupplierService.get_akt_sverka natijasi. Returns PDF bytes."""
     L = _LABELS.get(lang, _LABELS["uz"])
+    cur = (akt.get("currency") or "UZS").upper()
+    # UZS uchun «сўм/сум», boshqasi uchun valyuta kodi (USD, EUR…)
+    cur_label = L["sum"] if cur in ("UZS", "") else cur
+    money = lambda v: _fmt_money(v, cur)  # noqa: E731
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=18)
@@ -130,12 +143,14 @@ def build_akt_pdf(akt: dict, lang: str = "uz") -> bytes:
     pdf.ln(6)
     pdf.cell(0, 6, tr(f"{L['period']}: {_fmt_date(akt['date_from'])} - {_fmt_date(akt['date_to'])}"))
     pdf.ln(6)
+    pdf.cell(0, 6, tr(f"{L['currency']}: {cur}"))
+    pdf.ln(6)
     pdf.cell(0, 6, tr(f"{L['generated']}: {datetime.now().strftime('%d.%m.%Y %H:%M')}"))
     pdf.ln(6)
     pdf.ln(2)
 
     pdf.set_font(font, "B", 10)
-    pdf.cell(0, 7, tr(f"{L['opening']}: {_fmt_money(akt['opening_balance'])} {L['sum']}"))
+    pdf.cell(0, 7, tr(f"{L['opening']}: {money(akt['opening_balance'])} {cur_label}"))
     pdf.ln(9)
 
     # table
@@ -150,21 +165,21 @@ def build_akt_pdf(akt: dict, lang: str = "uz") -> bytes:
                 _fmt_date(r["date"]),
                 r["doc"],
                 (r["note"][:38] + "…") if len(str(r["note"])) > 39 else r["note"],
-                _fmt_money(r["debit"]) if r["debit"] else "",
-                _fmt_money(r["credit"]) if r["credit"] else "",
+                money(r["debit"]) if r["debit"] else "",
+                money(r["credit"]) if r["credit"] else "",
             ],
             align=["C", "L", "L", "R", "R"],
         )
     # totals row: label spans the first three columns so it never truncates
     pdf.set_font(font, "B", 9)
     pdf.cell(sum(widths[:3]), 7, tr(L["total"]), border=1, align="L", fill=True)
-    pdf.cell(widths[3], 7, tr(_fmt_money(akt["total_debit"])), border=1, align="R", fill=True)
-    pdf.cell(widths[4], 7, tr(_fmt_money(akt["total_credit"])), border=1, align="R", fill=True)
+    pdf.cell(widths[3], 7, tr(money(akt["total_debit"])), border=1, align="R", fill=True)
+    pdf.cell(widths[4], 7, tr(money(akt["total_credit"])), border=1, align="R", fill=True)
     pdf.ln()
 
     pdf.ln(4)
     pdf.set_font(font, "B", 11)
-    pdf.cell(0, 8, tr(f"{L['closing']}: {_fmt_money(akt['closing_balance'])} {L['sum']}"))
+    pdf.cell(0, 8, tr(f"{L['closing']}: {money(akt['closing_balance'])} {cur_label}"))
     pdf.ln(10)
 
     # signatures

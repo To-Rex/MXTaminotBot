@@ -305,6 +305,18 @@ async def get_bonuses(auth: dict = Depends(authenticate_webapp_user)):
     return _ser(await svc.get_bonuses(*_creds(auth), supplier_id))
 
 
+# ── 💱 valyutalar (akt sverka uchun) ────────────────────────────────────────
+@router.get("/currencies")
+async def get_currencies(auth: dict = Depends(authenticate_webapp_user)):
+    """getcry. 1C da tayyor bo'lmasa bo'sh ro'yxat — SPA valyuta tanlashni ko'rsatmaydi."""
+    await _require_supplier(auth)
+    try:
+        return {"currencies": await svc.get_currencies(*_creds(auth))}
+    except (ServiceUnavailable, SupplierError) as e:
+        logger.warning("webapp: valyutalar olinmadi (%s)", e)
+        return {"currencies": []}
+
+
 # ── 📄 akt sverka ───────────────────────────────────────────────────────────
 def _parse_period(date_from: Optional[str], date_to: Optional[str]) -> tuple[date, date]:
     today = date.today()
@@ -324,11 +336,14 @@ def _parse_period(date_from: Optional[str], date_to: Optional[str]) -> tuple[dat
 async def get_akt_sverka(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    cry_id: Optional[int] = None,
+    cry: Optional[str] = None,
     auth: dict = Depends(authenticate_webapp_user),
 ):
     supplier_id, lang = await _supplier_and_lang(auth)
     d1, d2 = _parse_period(date_from, date_to)
-    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2)
+    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2,
+                                   cry_id=cry_id, currency=cry or "UZS")
     return _ser({**akt, "date_from_iso": d1.isoformat(), "date_to_iso": d2.isoformat()})
 
 
@@ -337,18 +352,22 @@ async def get_akt_sverka_pdf(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     lang: Optional[str] = None,
+    cry_id: Optional[int] = None,
+    cry: Optional[str] = None,
     auth: dict = Depends(authenticate_webapp_user),
 ):
     supplier_id, user_lang = await _supplier_and_lang(auth)
     lang = lang if lang in SUPPORTED_LANGS else user_lang
     d1, d2 = _parse_period(date_from, date_to)
-    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2)
+    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2,
+                                   cry_id=cry_id, currency=cry or "UZS")
     try:
         pdf_bytes = build_akt_pdf(akt, lang)
     except Exception as e:
         logger.error("webapp akt pdf failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="PDF тайёрлашда хатолик")
-    filename = f"akt_sverka_{d1.isoformat()}_{d2.isoformat()}.pdf"
+    suffix = f"_{cry}" if cry else ""
+    filename = f"akt_sverka{suffix}_{d1.isoformat()}_{d2.isoformat()}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

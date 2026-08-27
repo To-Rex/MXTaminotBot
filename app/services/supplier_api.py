@@ -72,6 +72,7 @@ EXPECTED_SHAPES: dict[str, Any] = {
         "items": [{"bonus_id": 7701, "date": "2026-08-10", "kind": "accrued",
                    "amount": 164000, "note": "Юк YT-2608-0011 бўйича 2% бонус"}],
     },
+    "getcry": [{"id": 1, "name": "USD"}, {"id": 2, "name": "UZS"}],
     "getAktSverka": {
         "supplier_id": 70123, "name": 'MCHJ "Taminot Trade"',
         "date_from": "2026-08-01", "date_to": "2026-08-31",
@@ -664,15 +665,51 @@ class SupplierService:
             "items": items,
         }
 
+    # ── valyutalar ro'yxati (akt sverka uchun) ──────────────────────────
+    @staticmethod
+    async def get_currencies(base_url: str, login: str, password: str) -> list[dict]:
+        """``GET getcry`` → ``[{"id": 1, "name": "USD"}, {"id": 2, "name": "UZS"}]``.
+
+        UZS ro'yxat boshida turadi (asosiy valyuta sifatida).
+        """
+        data = await _get(base_url, login, password, "getcry")
+        rows = _expect_list("getcry", data)
+        out = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            name = str(r.get("name") or "").strip().upper()
+            if not name:
+                continue
+            out.append({"id": _to_int(r.get("id")), "name": name})
+        if not out:
+            api_log.amend_last(
+                "getcry", "unavailable",
+                f"javob shakli noto'g'ri — kutilgan: [{{id, name}}, …]; kelgan: {_shape_of(data)}",
+                expected=EXPECTED_SHAPES.get("getcry"),
+            )
+            raise ServiceUnavailable("getcry", "unexpected shape (no currency)")
+        out.sort(key=lambda c: (c["name"] != "UZS", c["name"]))
+        return out
+
     # ── akt sverka (TZ 2.6) ─────────────────────────────────────────────
     @staticmethod
     async def get_akt_sverka(base_url: str, login: str, password: str, supplier_id: str,
-                             date_from: date, date_to: date) -> dict:
+                             date_from: date, date_to: date,
+                             cry_id: Optional[int] = None, currency: str = "UZS") -> dict:
+        """Akt sverka. ``cry_id`` — ``getcry`` dagi valyuta kodi (berilmasa 1C o'z
+        standart valyutasini beradi). ``currency`` — shu valyutaning nomi, faqat
+        ko'rsatish/PDF uchun ishlatiladi."""
         data = await _get(base_url, login, password, "getAktSverka",
                           supplier_id=supplier_id,
-                          date_from=date_from.isoformat(), date_to=date_to.isoformat())
+                          date_from=date_from.isoformat(), date_to=date_to.isoformat(),
+                          cry_id=cry_id)
         d = _expect_dict("getAktSverka", data, ("rows", "closing_balance"))
-        return _map_akt(d, supplier_id, date_from, date_to)
+        return {
+            **_map_akt(d, supplier_id, date_from, date_to),
+            "currency": (currency or "UZS").upper(),
+            "cry_id": cry_id,
+        }
 
 
 supplier_service = SupplierService()
