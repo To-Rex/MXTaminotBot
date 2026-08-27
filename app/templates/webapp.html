@@ -356,7 +356,8 @@ const amount = (n, cur) => {
   return `<span class="num">${v.toLocaleString('ru-RU', {minimumFractionDigits: has ? 2 : 0, maximumFractionDigits: 2}).replace(/\u00a0/g, ' ')}</span> ${c}`;
 };
 const amounts = (list, fallback) => (list && list.length)
-  ? list.map(x => amount(x.total, x.currency)).join(' · ')
+  // bir nechta valyuta bo'lsa har biri alohida qatorda (katakchaga sig'sin)
+  ? list.map(x => `<span style="display:block${list.length > 1 ? ';font-size:15px;line-height:1.35' : ''}">${amount(x.total, x.currency)}</span>`).join('')
   : (fallback === null || fallback === undefined ? '<span style="color:var(--muted)">—</span>' : money(fallback));
 const moneyOr = n => (n === null || n === undefined) ? '<span style="color:var(--muted)">—</span>' : money(n);
 const note = (t, m) => `<div class="note ${t}">${m}</div>`;
