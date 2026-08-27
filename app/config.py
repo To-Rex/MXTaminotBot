@@ -53,8 +53,3 @@ try:
 except ValueError:
     PRODUCTS_CACHE_TTL = 30
 
-# 1C da hali tayyor bo'lmagan supplier endpointlari uchun mock (namunaviy)
-# ma'lumot bilan davom etish (TZ: kerakli apilar yo'q bo'lsa mock bilan).
-# "0" qilib qo'yilsa — 1C tayyor bo'lmagan bo'lim foydalanuvchiga
-# "бу хизмат тез кунда ишга тушади" deb ko'rsatiladi.
-SUPPLIER_MOCK_FALLBACK = os.getenv("SUPPLIER_MOCK_FALLBACK", "1").strip().lower() not in ("0", "false", "no", "")

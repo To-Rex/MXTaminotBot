@@ -2,9 +2,9 @@
 
 Auth: Telegram initData (X-Telegram-Init-Data) yoki ?session=<token> (/getsession) —
 MX-Client-Bot bilan bir xil mexanizm (app/web/web_app_auth.py).
-Data: ``SupplierService`` — bot ishlatadigan xuddi shu servis (1C + mock fallback).
-1C tayyor bo'lmagan endpoint mock o'chirilganda → 503 {"code": "SERVICE_UNAVAILABLE"}
-(app/main.py dagi exception handler).
+Data: ``SupplierService`` — bot ishlatadigan xuddi shu servis (faqat 1C).
+1C javob bermasa → 503 {"code": "SERVICE_UNAVAILABLE"} (app/main.py dagi handler),
+SPA foydalanuvchiga xatolik haqida xabar ko'rsatadi.
 """
 import logging
 from datetime import date, datetime, timedelta
@@ -78,7 +78,7 @@ async def _save_user(telegram_id: int, bot_id: int, phone_number: str,
 
 
 def _lang(user: Optional[User]) -> str:
-    """Foydalanuvchi tili — mock ma'lumot matnlari ham shu tilda qaytadi."""
+    """Foydalanuvchi tili (akt sverka PDF si shu tilda tayyorlanadi)."""
     return user.language if user and user.language in SUPPORTED_LANGS else "uz"
 
 
@@ -120,15 +120,14 @@ class RegisterRequest(BaseModel):
 
 @router.post("/register")
 async def register(req: RegisterRequest, auth: dict = Depends(authenticate_webapp_user)):
-    """Login — botdagi bilan bir xil: checkNumber (APIService.register_device + mock fallback)."""
+    """Login — botdagi bilan bir xil: checkNumber (APIService.register_device)."""
     phone = req.phone_number.lstrip("+").replace(" ", "").replace("-", "")
     result = await svc.check_number(*_creds(auth), phone, str(auth["telegram_id"]), auth["bot_id"])
     if not result or not result.get("id"):
         raise HTTPException(status_code=400, detail="Таъминотчи топилмади. Рақамни текшириб қайта уриниб кўринг.")
     supplier_id = str(result["id"])
     await _save_user(auth["telegram_id"], auth["bot_id"], phone, supplier_id, req.language)
-    return {"success": True, "supplier_id": supplier_id,
-            "name": result.get("name") or "", "_mock": bool(result.get("_mock"))}
+    return {"success": True, "supplier_id": supplier_id, "name": result.get("name") or ""}
 
 
 class LanguageRequest(BaseModel):
@@ -177,12 +176,12 @@ async def get_cabinet(auth: dict = Depends(authenticate_webapp_user)):
     if not user or not user.client_id:
         raise HTTPException(status_code=400, detail="Аввал рўйхатдан ўтинг")
     supplier_id, lang, phone = user.client_id, _lang(user), user.phone_number or ""
-    cab = await svc.get_cabinet(*_creds(auth), supplier_id, phone=phone, lang=lang)
+    cab = await svc.get_cabinet(*_creds(auth), supplier_id, phone=phone)
     bal = await svc.get_balance(*_creds(auth), supplier_id)
-    bon = await svc.get_bonuses(*_creds(auth), supplier_id, lang)
-    shipments = await svc.get_shipments(*_creds(auth), supplier_id, lang)
-    payments = await svc.get_payments(*_creds(auth), supplier_id, lang)
-    returns = await svc.get_returns(*_creds(auth), supplier_id, lang)
+    bon = await svc.get_bonuses(*_creds(auth), supplier_id)
+    shipments = await svc.get_shipments(*_creds(auth), supplier_id)
+    payments = await svc.get_payments(*_creds(auth), supplier_id)
+    returns = await svc.get_returns(*_creds(auth), supplier_id)
     return _ser({
         **cab,
         "balance": bal["balance"],
@@ -193,7 +192,6 @@ async def get_cabinet(auth: dict = Depends(authenticate_webapp_user)):
         "payments_confirmed_total": sum(p["amount"] for p in payments if p["status"] == "confirmed"),
         "pending_payments": sum(1 for p in payments if p["status"] == "pending"),
         "pending_returns": sum(1 for r in returns if r["status"] == "pending"),
-        "_mock": any(x.get("_mock") for x in (cab, bal, bon)),
     })
 
 
@@ -208,13 +206,12 @@ async def get_balance(auth: dict = Depends(authenticate_webapp_user)):
 @router.get("/payments")
 async def get_payments(auth: dict = Depends(authenticate_webapp_user)):
     supplier_id, lang = await _supplier_and_lang(auth)
-    payments = await svc.get_payments(*_creds(auth), supplier_id, lang)
+    payments = await svc.get_payments(*_creds(auth), supplier_id)
     return _ser({
         "payments": payments,
         "total": sum(p["amount"] for p in payments),
         "confirmed_total": sum(p["amount"] for p in payments if p["status"] == "confirmed"),
         "pending_count": sum(1 for p in payments if p["status"] == "pending"),
-        "_mock": any(p.get("_mock") for p in payments),
     })
 
 
@@ -225,7 +222,7 @@ async def confirm_payment(payment_id: int, auth: dict = Depends(authenticate_web
                                        chat_id=str(auth["telegram_id"]), source="webapp")
     if not result or not result.get("success"):
         raise HTTPException(status_code=400, detail="Тасдиқлаш амалга ошмади")
-    p = await svc.get_payment(*_creds(auth), supplier_id, payment_id, lang)
+    p = await svc.get_payment(*_creds(auth), supplier_id, payment_id)
     return _ser({**result, "payment": p})
 
 
@@ -233,12 +230,11 @@ async def confirm_payment(payment_id: int, auth: dict = Depends(authenticate_web
 @router.get("/shipments")
 async def get_shipments(auth: dict = Depends(authenticate_webapp_user)):
     supplier_id, lang = await _supplier_and_lang(auth)
-    shipments = await svc.get_shipments(*_creds(auth), supplier_id, lang)
+    shipments = await svc.get_shipments(*_creds(auth), supplier_id)
     return _ser({
         "shipments": shipments,
         "total": sum(s["total"] for s in shipments),
         "count": len(shipments),
-        "_mock": any(s.get("_mock") for s in shipments),
     })
 
 
@@ -246,12 +242,11 @@ async def get_shipments(auth: dict = Depends(authenticate_webapp_user)):
 @router.get("/returns")
 async def get_returns(auth: dict = Depends(authenticate_webapp_user)):
     supplier_id, lang = await _supplier_and_lang(auth)
-    returns = await svc.get_returns(*_creds(auth), supplier_id, lang)
+    returns = await svc.get_returns(*_creds(auth), supplier_id)
     return _ser({
         "returns": returns,
         "total": sum(r["total"] for r in returns),
         "pending_count": sum(1 for r in returns if r["status"] == "pending"),
-        "_mock": any(r.get("_mock") for r in returns),
     })
 
 
@@ -262,7 +257,7 @@ async def confirm_return(return_id: int, auth: dict = Depends(authenticate_webap
                                       chat_id=str(auth["telegram_id"]), source="webapp")
     if not result or not result.get("success"):
         raise HTTPException(status_code=400, detail="Тасдиқлаш амалга ошмади")
-    r = await svc.get_return(*_creds(auth), supplier_id, return_id, lang)
+    r = await svc.get_return(*_creds(auth), supplier_id, return_id)
     return _ser({**result, "return": r})
 
 
@@ -270,7 +265,7 @@ async def confirm_return(return_id: int, auth: dict = Depends(authenticate_webap
 @router.get("/bonuses")
 async def get_bonuses(auth: dict = Depends(authenticate_webapp_user)):
     supplier_id, lang = await _supplier_and_lang(auth)
-    return _ser(await svc.get_bonuses(*_creds(auth), supplier_id, lang))
+    return _ser(await svc.get_bonuses(*_creds(auth), supplier_id))
 
 
 # ── 📄 akt sverka ───────────────────────────────────────────────────────────
@@ -296,7 +291,7 @@ async def get_akt_sverka(
 ):
     supplier_id, lang = await _supplier_and_lang(auth)
     d1, d2 = _parse_period(date_from, date_to)
-    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2, lang)
+    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2)
     return _ser({**akt, "date_from_iso": d1.isoformat(), "date_to_iso": d2.isoformat()})
 
 
@@ -310,7 +305,7 @@ async def get_akt_sverka_pdf(
     supplier_id, user_lang = await _supplier_and_lang(auth)
     lang = lang if lang in SUPPORTED_LANGS else user_lang
     d1, d2 = _parse_period(date_from, date_to)
-    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2, lang)
+    akt = await svc.get_akt_sverka(*_creds(auth), supplier_id, d1, d2)
     try:
         pdf_bytes = build_akt_pdf(akt, lang)
     except Exception as e:

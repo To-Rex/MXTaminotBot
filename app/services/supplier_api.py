@@ -1,18 +1,17 @@
-"""Таъминотчи (supplier) data service — 1C HTTP-servis klienti + mock fallback.
+"""Таъминотчи (supplier) data service — 1C HTTP-servis klienti.
 
 Endpointlar va javob shakllari: docs/1C_SUPPLIER_API.md
 Base: {base_url}/hs/supplier_bot/api/<endpoint>, HTTP Basic Auth (har bir bot uchun panel sozlamasi).
 
+Barcha ma'lumot **faqat 1C dan** olinadi — namunaviy (mock) ma'lumot yo'q.
+
 Failure model:
-  * ``ServiceUnavailable`` — endpoint hali yozilmagan / 1C ishlamayapti / javob shakli noto'g'ri.
+  * ``ServiceUnavailable`` — 404 / bo'sh javob / 5xx / tarmoq xatosi / javob shakli
+    noto'g'ri. Bot va WebApp foydalanuvchiga xatolik haqida xabar beradi.
   * ``SupplierError``      — 1C biznes xato qaytardi ({"error": {code, message}}).
 
-TZ bo'yicha 1C da hali tayyor bo'lmagan endpointlar uchun mock fallback bor:
-``SUPPLIER_MOCK_FALLBACK=1`` (default) bo'lsa, ServiceUnavailable holatida
-``app.services.mock_data`` dagi namunaviy ma'lumot qaytadi va natijaga
-``_mock: True`` belgisi qo'shiladi — bot foydalanuvchiga demo rejim haqida
-ogohlantirish ko'rsatadi. 1C endpoint tayyor bo'lgach hech narsa o'zgartirmasdan
-real ma'lumot ishlaydi.
+Har bir so'rov va javob ``api_log`` ga yoziladi va admin paneldagi
+``/panel/api-logs`` sahifasida kutilgan shakl bilan yonma-yon ko'rinadi.
 """
 import base64
 import logging
@@ -22,8 +21,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app.config import SUPPLIER_MOCK_FALLBACK
-from app.services import api_log, mock_data
+from app.services import api_log
 from app.services.api import APIService
 from app.services.http_client import get_http_client
 
@@ -44,7 +42,7 @@ EXPECTED_SHAPES: dict[str, Any] = {
         "status": "Фаол таъминотчи", "registered_at": "2025-03-14",
     },
     "getBalance": {"balance": 12500000, "currency": "UZS", "as_of": "2026-08-20T12:00:00"},
-    "getPayments": [{
+    "getPaymentsSupplier": [{
         "payment_id": 90101, "doc_number": "TL-260812-101", "date": "2026-08-12",
         "amount": 5400000, "method": "transfer", "status": "pending",
         "confirmed_at": None, "note": "Юк YT-2608-0011 учун тўлов",
@@ -206,6 +204,14 @@ async def _request_once(
     prefix: str = API_PREFIX,
 ) -> Any:
     if not base_url:
+        # Panelda 1C manzili kiritilmagan — buni ham logga yozamiz, aks holda
+        # /panel/api-logs bo'sh qolib, sabab ko'rinmay qolardi.
+        api_log.record(
+            endpoint=endpoint, method=method, url="(base_url kiritilmagan)",
+            params=params, request_body=body, outcome="unavailable",
+            error="bot sozlamalarida 1C manzili (base_url) bo'sh — /panel dan kiriting",
+            expected=EXPECTED_SHAPES.get(endpoint),
+        )
         raise ServiceUnavailable(endpoint, "base_url is empty (bot settings)")
     url = f"{base_url.rstrip('/')}{prefix}{endpoint}"
     creds = base64.b64encode(f"{login}:{password}".encode()).decode()
@@ -269,13 +275,33 @@ async def _post(base_url, login, password, endpoint, body: dict) -> Any:
     return await _request("POST", base_url, login, password, endpoint, body=body)
 
 
+def _shape_of(data: Any) -> str:
+    """Nima kelganini qisqa, inson o'qiydigan tavsifi (api-logs sahifasi uchun)."""
+    if data is None:
+        return "hech narsa (bo'sh)"
+    if isinstance(data, list):
+        if not data:
+            return "bo'sh ro'yxat []"
+        inner = ", ".join(sorted(data[0].keys())[:12]) if isinstance(data[0], dict) else type(data[0]).__name__
+        return f"ro'yxat [{len(data)} ta element], birinchi element kalitlari: {inner}"
+    if isinstance(data, dict):
+        return "obyekt, kalitlari: " + (", ".join(sorted(data.keys())[:15]) or "(bo'sh)")
+    return f"{type(data).__name__}: {str(data)[:80]}"
+
+
 def _expect_list(endpoint: str, data: Any) -> list:
+    """1C ro'yxat qaytarishi kerak. Shakl mos kelmasa — api_log ga ham yoziladi."""
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
         for key in ("items", "data", "list", "rows", endpoint):
             if isinstance(data.get(key), list):
                 return data[key]
+    api_log.amend_last(
+        endpoint, "unavailable",
+        f"javob shakli noto'g'ri — kutilgan: JSON ro'yxat [ {{…}} ]; kelgan: {_shape_of(data)}",
+        expected=EXPECTED_SHAPES.get(endpoint),
+    )
     raise ServiceUnavailable(endpoint, "unexpected shape (not a list)")
 
 
@@ -284,8 +310,19 @@ def _expect_dict(endpoint: str, data: Any, must_have: tuple = ()) -> dict:
     if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
         data = data[0]
     if not isinstance(data, dict):
+        api_log.amend_last(
+            endpoint, "unavailable",
+            f"javob shakli noto'g'ri — kutilgan: JSON obyekt {{…}}; kelgan: {_shape_of(data)}",
+            expected=EXPECTED_SHAPES.get(endpoint),
+        )
         raise ServiceUnavailable(endpoint, "unexpected shape (not an object)")
     if must_have and not any(k in data for k in must_have):
+        api_log.amend_last(
+            endpoint, "unavailable",
+            f"kutilgan kalitlardan birortasi ham yo'q: {', '.join(must_have)}; kelgan kalitlar: "
+            + (", ".join(sorted(data.keys())[:15]) or "(bo'sh obyekt)"),
+            expected=EXPECTED_SHAPES.get(endpoint),
+        )
         raise ServiceUnavailable(endpoint, f"unexpected shape (missing {must_have})")
     return data
 
@@ -388,12 +425,33 @@ def _map_akt(d: dict, supplier_id: str, date_from: date, date_to: date) -> dict:
     }
 
 
-def _mock_used(endpoint: str, e: ServiceUnavailable) -> None:
-    logger.info("🧪 mock fallback for %s (1C: %s)", endpoint, e.reason)
+# ────────────────────────────────────────────────────────────────────────────
+# login xatosini ajratish
+# ────────────────────────────────────────────────────────────────────────────
+LOGIN_ENDPOINTS = ("checkNumber", "device (legacy)")
+
+
+def _raise_if_login_unavailable(endpoint: str = "checkNumber") -> None:
+    """``APIService.register_device`` muvaffaqiyatsizlikda faqat ``None`` qaytaradi —
+    sababini ``api_log`` dagi oxirgi yozuvdan aniqlaymiz:
+
+    * ``404`` / biznes xato  → taminotchi haqiqatan topilmadi (bot «топилмади» deydi);
+    * tarmoq xatosi yoki 5xx → xizmat ishlamayapti → ``ServiceUnavailable``
+      (bot foydalanuvchiga xatolik haqida xabar beradi).
+    """
+    for e in api_log.entries(limit=8):
+        if e["endpoint"] not in LOGIN_ENDPOINTS:
+            continue
+        if e["outcome"] == "ok":
+            return
+        code = e.get("status_code")
+        if e["outcome"] == "unavailable" or (isinstance(code, int) and code >= 500):
+            raise ServiceUnavailable(endpoint, e.get("error") or f"http {code}")
+        return
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# service facade
+# service facade — barcha ma'lumot faqat 1C dan olinadi
 # ────────────────────────────────────────────────────────────────────────────
 class SupplierService:
     fmt_money = staticmethod(_fmt_money)
@@ -407,38 +465,26 @@ class SupplierService:
 
         MX-Client-Bot dagi login bilan aynan bir xil: ``APIService.register_device``
         (POST /hs/client_bot/api/checkNumber, topilmasa legacy /hs/client/api/device).
-        So'rov tanasi: ``{"phoneNumber": <int>, "chatID": "<str>", "botID": <int>}`` —
-        ``botID`` panel'dagi bot raqami, 1C uni taminotchi kartochkasiga saqlaydi.
-        Returns {"id": ..., "name": ...} yoki None (topilmadi).
+        So'rov tanasi: ``{"phoneNumber": <int>, "chatID": "<str>", "botID": <int>}``.
 
-        1C umuman javob bermasa (tarmoq/xizmat yo'q → result None) va mock rejim
-        yoqilgan bo'lsa — demo taminotchi qaytadi. 1C "topilmadi" deb javob bersa
-        (id siz JSON) — MX-Client-Bot dagidek None qaytadi.
+        Returns ``{"id": ..., "name": ...}``; taminotchi topilmasa ``None``.
+        1C bilan aloqa bo'lmasa (tarmoq/5xx) ``ServiceUnavailable`` ko'tariladi.
         """
         result = await APIService.register_device(base_url, login, password, phone,
                                                   str(chat_id), int(bot_id or 0))
         if result and result.get("id"):
             return {"id": result["id"], "name": str(result.get("name") or "")}
-        if result is None and SUPPLIER_MOCK_FALLBACK:
-            logger.info("🧪 mock fallback for checkNumber (1C javob bermadi)")
-            return {**mock_data.check_number(str(phone)), "_mock": True}
+        _raise_if_login_unavailable()
         return None
 
     # ── 2. cabinet — getClientInfo (1C da tayyor, MX-Client-Bot bilan umumiy) ─
     @staticmethod
     async def get_cabinet(base_url: str, login: str, password: str,
-                          supplier_id: str, phone: str = "", lang: str = "uz") -> dict:
+                          supplier_id: str, phone: str = "") -> dict:
         """👤 Кабинет: GET /hs/client_bot/api/getClientInfo?client_id=<supplier_id>."""
-        try:
-            data = await _request("GET", base_url, login, password, "getClientInfo",
-                                  params={"client_id": supplier_id}, prefix=CLIENT_API_PREFIX)
-            d = _expect_dict("getClientInfo", data, ("client_id", "name"))
-            mock = False
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("getClientInfo", e)
-            d, mock = mock_data.get_cabinet(supplier_id, phone, lang), True
+        data = await _request("GET", base_url, login, password, "getClientInfo",
+                              params={"client_id": supplier_id}, prefix=CLIENT_API_PREFIX)
+        d = _expect_dict("getClientInfo", data, ("client_id", "name"))
         reg = _parse_date(d.get("registered_at"))
         return {
             "supplier_id": str(d.get("client_id") or d.get("supplier_id") or supplier_id),
@@ -446,47 +492,32 @@ class SupplierService:
             "phone": str(d.get("phone") or phone or ""),
             "status": str(d.get("status") or "Таъминотчи"),
             "registered_at": _fmt_date(reg) if reg else str(d.get("registered_at") or "—"),
-            "_mock": mock,
         }
 
-    # ── info / balance (TZ 2.5) ─────────────────────────────────────────
+    # ── balans (TZ 2.5) ─────────────────────────────────────────────────
     @staticmethod
     async def get_balance(base_url: str, login: str, password: str, supplier_id: str) -> dict:
-        try:
-            data = await _get(base_url, login, password, "getBalance", supplier_id=supplier_id)
-            d = _expect_dict("getBalance", data, ("balance",))
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("getBalance", e)
-            d = {**mock_data.get_balance(supplier_id), "_mock": True}
+        data = await _get(base_url, login, password, "getBalance", supplier_id=supplier_id)
+        d = _expect_dict("getBalance", data, ("balance",))
         return {
             "balance": _to_float(d.get("balance")),
             "currency": str(d.get("currency") or "UZS"),
             "as_of": _parse_dt(d.get("as_of")) or datetime.now(),
-            "_mock": bool(d.get("_mock")),
         }
 
-    # ── payments (TZ 2.1) ───────────────────────────────────────────────
+    # ── to'lovlar (TZ 2.1) ──────────────────────────────────────────────
     @staticmethod
-    async def get_payments(base_url: str, login: str, password: str, supplier_id: str,
-                           lang: str = "uz") -> list[dict]:
-        try:
-            data = await _get(base_url, login, password, "getPayments", supplier_id=supplier_id)
-            rows, mock = _expect_list("getPayments", data), False
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("getPayments", e)
-            rows, mock = mock_data.get_payments(supplier_id, lang), True
-        out = [{**_map_payment(p), "_mock": mock} for p in rows if isinstance(p, dict)]
+    async def get_payments(base_url: str, login: str, password: str, supplier_id: str) -> list[dict]:
+        data = await _get(base_url, login, password, "getPaymentsSupplier", supplier_id=supplier_id)
+        rows = _expect_list("getPaymentsSupplier", data)
+        out = [_map_payment(p) for p in rows if isinstance(p, dict)]
         out.sort(key=lambda p: p["date"], reverse=True)
         return out
 
     @staticmethod
     async def get_payment(base_url: str, login: str, password: str,
-                          supplier_id: str, payment_id: int, lang: str = "uz") -> Optional[dict]:
-        for p in await SupplierService.get_payments(base_url, login, password, supplier_id, lang):
+                          supplier_id: str, payment_id: int) -> Optional[dict]:
+        for p in await SupplierService.get_payments(base_url, login, password, supplier_id):
             if p["payment_id"] == int(payment_id):
                 return p
         return None
@@ -496,72 +527,48 @@ class SupplierService:
                               supplier_id: str, payment_id: int, chat_id: str = "",
                               source: str = "telegram_bot") -> Optional[dict]:
         """Tasdiqlash 1C ga uzatiladi (TZ 3: тасдиқлаш операциялари 1Cга узатилади)."""
-        try:
-            data = await _post(base_url, login, password, "confirmPayment", {
-                "supplier_id": _to_int(supplier_id), "payment_id": int(payment_id),
-                "chat_id": str(chat_id or ""), "source": source,
-            })
-            d = _expect_dict("confirmPayment", data, ("success", "status"))
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("confirmPayment", e)
-            res = mock_data.confirm_payment(supplier_id, payment_id)
-            if not res:
-                return None
-            d = {**res, "_mock": True}
+        data = await _post(base_url, login, password, "confirmPayment", {
+            "supplier_id": _to_int(supplier_id), "payment_id": int(payment_id),
+            "chat_id": str(chat_id or ""), "source": source,
+        })
+        d = _expect_dict("confirmPayment", data, ("success", "status"))
         return {
             "success": bool(d.get("success", True)),
             "payment_id": _to_int(d.get("payment_id"), int(payment_id)),
             "status": str(d.get("status") or "confirmed"),
             "confirmed_at": _parse_dt(d.get("confirmed_at")) or datetime.now(),
-            "_mock": bool(d.get("_mock")),
         }
 
-    # ── shipments (TZ 2.2) ──────────────────────────────────────────────
+    # ── berilgan yuklar (TZ 2.2) ────────────────────────────────────────
     @staticmethod
-    async def get_shipments(base_url: str, login: str, password: str, supplier_id: str,
-                            lang: str = "uz") -> list[dict]:
-        try:
-            data = await _get(base_url, login, password, "getShipments", supplier_id=supplier_id)
-            rows, mock = _expect_list("getShipments", data), False
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("getShipments", e)
-            rows, mock = mock_data.get_shipments(supplier_id, lang), True
-        out = [{**_map_shipment(s), "_mock": mock} for s in rows if isinstance(s, dict)]
+    async def get_shipments(base_url: str, login: str, password: str, supplier_id: str) -> list[dict]:
+        data = await _get(base_url, login, password, "getShipments", supplier_id=supplier_id)
+        rows = _expect_list("getShipments", data)
+        out = [_map_shipment(s) for s in rows if isinstance(s, dict)]
         out.sort(key=lambda s: s["date"], reverse=True)
         return out
 
     @staticmethod
     async def get_shipment(base_url: str, login: str, password: str,
-                           supplier_id: str, shipment_id: int, lang: str = "uz") -> Optional[dict]:
-        for s in await SupplierService.get_shipments(base_url, login, password, supplier_id, lang):
+                           supplier_id: str, shipment_id: int) -> Optional[dict]:
+        for s in await SupplierService.get_shipments(base_url, login, password, supplier_id):
             if s["shipment_id"] == int(shipment_id):
                 return s
         return None
 
-    # ── returns (TZ 2.3) ────────────────────────────────────────────────
+    # ── qaytarishlar (TZ 2.3) ───────────────────────────────────────────
     @staticmethod
-    async def get_returns(base_url: str, login: str, password: str, supplier_id: str,
-                          lang: str = "uz") -> list[dict]:
-        try:
-            data = await _get(base_url, login, password, "getReturns", supplier_id=supplier_id)
-            rows, mock = _expect_list("getReturns", data), False
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("getReturns", e)
-            rows, mock = mock_data.get_returns(supplier_id, lang), True
-        out = [{**_map_return(r), "_mock": mock} for r in rows if isinstance(r, dict)]
+    async def get_returns(base_url: str, login: str, password: str, supplier_id: str) -> list[dict]:
+        data = await _get(base_url, login, password, "getReturns", supplier_id=supplier_id)
+        rows = _expect_list("getReturns", data)
+        out = [_map_return(r) for r in rows if isinstance(r, dict)]
         out.sort(key=lambda r: r["date"], reverse=True)
         return out
 
     @staticmethod
     async def get_return(base_url: str, login: str, password: str,
-                         supplier_id: str, return_id: int, lang: str = "uz") -> Optional[dict]:
-        for r in await SupplierService.get_returns(base_url, login, password, supplier_id, lang):
+                         supplier_id: str, return_id: int) -> Optional[dict]:
+        for r in await SupplierService.get_returns(base_url, login, password, supplier_id):
             if r["return_id"] == int(return_id):
                 return r
         return None
@@ -570,40 +577,23 @@ class SupplierService:
     async def confirm_return(base_url: str, login: str, password: str,
                              supplier_id: str, return_id: int, chat_id: str = "",
                              source: str = "telegram_bot") -> Optional[dict]:
-        try:
-            data = await _post(base_url, login, password, "confirmReturn", {
-                "supplier_id": _to_int(supplier_id), "return_id": int(return_id),
-                "chat_id": str(chat_id or ""), "source": source,
-            })
-            d = _expect_dict("confirmReturn", data, ("success", "status"))
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("confirmReturn", e)
-            res = mock_data.confirm_return(supplier_id, return_id)
-            if not res:
-                return None
-            d = {**res, "_mock": True}
+        data = await _post(base_url, login, password, "confirmReturn", {
+            "supplier_id": _to_int(supplier_id), "return_id": int(return_id),
+            "chat_id": str(chat_id or ""), "source": source,
+        })
+        d = _expect_dict("confirmReturn", data, ("success", "status"))
         return {
             "success": bool(d.get("success", True)),
             "return_id": _to_int(d.get("return_id"), int(return_id)),
             "status": str(d.get("status") or "confirmed"),
             "confirmed_at": _parse_dt(d.get("confirmed_at")) or datetime.now(),
-            "_mock": bool(d.get("_mock")),
         }
 
-    # ── bonuses (TZ 2.4) ────────────────────────────────────────────────
+    # ── bonuslar (TZ 2.4) ───────────────────────────────────────────────
     @staticmethod
-    async def get_bonuses(base_url: str, login: str, password: str, supplier_id: str,
-                          lang: str = "uz") -> dict:
-        try:
-            data = await _get(base_url, login, password, "getBonuses", supplier_id=supplier_id)
-            d, mock = _expect_dict("getBonuses", data, ("accrued", "remaining", "items")), False
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("getBonuses", e)
-            d, mock = mock_data.get_bonuses(supplier_id, lang), True
+    async def get_bonuses(base_url: str, login: str, password: str, supplier_id: str) -> dict:
+        data = await _get(base_url, login, password, "getBonuses", supplier_id=supplier_id)
+        d = _expect_dict("getBonuses", data, ("accrued", "remaining", "items"))
         items = [_map_bonus_item(b) for b in (d.get("items") or []) if isinstance(b, dict)]
         items.sort(key=lambda b: b["date"], reverse=True)
         accrued = _to_float(d.get("accrued"), sum(b["amount"] for b in items if b["kind"] == "accrued"))
@@ -613,24 +603,17 @@ class SupplierService:
             "used": used,
             "remaining": _to_float(d.get("remaining"), accrued - used),
             "items": items,
-            "_mock": mock,
         }
 
     # ── akt sverka (TZ 2.6) ─────────────────────────────────────────────
     @staticmethod
     async def get_akt_sverka(base_url: str, login: str, password: str, supplier_id: str,
-                             date_from: date, date_to: date, lang: str = "uz") -> dict:
-        try:
-            data = await _get(base_url, login, password, "getAktSverka",
-                              supplier_id=supplier_id,
-                              date_from=date_from.isoformat(), date_to=date_to.isoformat())
-            d, mock = _expect_dict("getAktSverka", data, ("rows", "closing_balance")), False
-        except ServiceUnavailable as e:
-            if not SUPPLIER_MOCK_FALLBACK:
-                raise
-            _mock_used("getAktSverka", e)
-            d, mock = mock_data.get_akt_sverka(supplier_id, date_from, date_to, lang), True
-        return {**_map_akt(d, supplier_id, date_from, date_to), "_mock": mock}
+                             date_from: date, date_to: date) -> dict:
+        data = await _get(base_url, login, password, "getAktSverka",
+                          supplier_id=supplier_id,
+                          date_from=date_from.isoformat(), date_to=date_to.isoformat())
+        d = _expect_dict("getAktSverka", data, ("rows", "closing_balance"))
+        return _map_akt(d, supplier_id, date_from, date_to)
 
 
 supplier_service = SupplierService()

@@ -33,8 +33,7 @@
     ├── models.py                   # Bot, User (language, supplier bog'lanishi)
     ├── i18n.py                     # Ўзбекча / Русский bot matnlari
     ├── services/
-    │   ├── supplier_api.py         # 1C supplier API klienti + mock fallback
-    │   ├── mock_data.py            # 1C tayyor bo'lmaganda namunaviy ma'lumot
+    │   ├── supplier_api.py         # 1C supplier API klienti (faqat real ma'lumot)
     │   ├── pdf.py                  # Акт сверка PDF generator
     │   ├── api_log.py              # /panel/api-logs uchun 1C so'rovlar jurnali
     │   ├── auth_api.py             # Panel login (tashqi auth API)
@@ -74,15 +73,14 @@
 | **💳 Баланс** | жорий баланс (мусбат — компания қарздор) |
 | **📄 Акт сверка** | давр танлаш (жорий/ўтган ой, 3 ой, йил, ихтиёрий) → кўриш → **PDF юклаб олиш** |
 
-### 1C интеграцияси ва mock режим
-Барча маълумотлар `app/services/supplier_api.py` орқали 1C дан олинади
-(`{base_url}/hs/supplier_bot/api/…`, spec: `docs/1C_SUPPLIER_API.md`).
+### 1C интеграцияси
+Барча маълумотлар **фақат 1C дан** олинади (`app/services/supplier_api.py`,
+`{base_url}/hs/supplier_bot/api/…`, spec: `docs/1C_SUPPLIER_API.md`) — намунавий (demo/mock) маълумот йўқ.
 
-1C да ҳали тайёр бўлмаган endpoint учун:
-- `SUPPLIER_MOCK_FALLBACK=1` (default) — бот **намунавий маълумотлар** билан ишлайди, фойдаланувчига «Демо режим» белгиси кўрсатилади. Тасдиқлашлар mock ҳолатида ҳам ишлайди (runtime да сақланади).
-- `SUPPLIER_MOCK_FALLBACK=0` — «Бу хизмат тез кунда ишга тушади» кўрсатилади.
-
-Endpoint 1C да тайёр бўлгач бот ҳеч қандай ўзгаришсиз реал маълумотга ўтади. Барча 1C сўровлари `/panel/api-logs` да кўринади (kutilgan javob shakli bilan solishtirib).
+1C жавоб бермаса (404 / бўш жавоб / 5xx / тармоқ хатоси / нотўғри шакл):
+- ботда: «❌ Маълумот олинмади — 1C билан алоқа йўқ ёки хизмат жавоб бермаяпти»
+- WebApp да: `503 {"code": "SERVICE_UNAVAILABLE"}` → экранда хатолик картаси
+- тафсилоти: **`/panel/api-logs`** — URL, сўров танаси, келган жавоб ва кутилган шакл билан ёнма-ён таққослаш
 
 ### APIs Integrated (1C, per-bot credentials)
 
@@ -91,7 +89,7 @@ Endpoint 1C да тайёр бўлгач бот ҳеч қандай ўзгари
 | `/hs/client_bot/api/checkNumber` | POST | **Login — MX-Client-Bot билан бир хил** (`APIService.register_device`, legacy `/hs/client/api/device` fallback). Тана: `{phoneNumber, chatID, botID}` — `botID` панелдаги бот рақами |
 | `/hs/client_bot/api/getClientInfo` | GET | 👤 Кабинет профили (MX-Client-Bot билан умумий, 1C да тайёр) |
 | `/hs/supplier_bot/api/getBalance` | GET | Жорий баланс |
-| `/hs/supplier_bot/api/getPayments` | GET | Тўловлар рўйхати |
+| `/hs/supplier_bot/api/getPaymentsSupplier` | GET | Тўловлар рўйхати |
 | `/hs/supplier_bot/api/confirmPayment` | POST | Тўловни тасдиқлаш (1C да қайд этилади) |
 | `/hs/supplier_bot/api/getShipments` | GET | Берилган юклар (товарлар билан) |
 | `/hs/supplier_bot/api/getReturns` | GET | Қайтаришлар рўйхати |
@@ -107,7 +105,7 @@ Bot bilan **100% bir xil funksionallik** — MX-Client-Bot dagi kabi arxitektura
 - ⚠️ Telegram Mini App **HTTPS** talab qiladi: `WEBAPP_URL=https://<domen>` bo'lsagina menyu tugmasi o'rnatiladi. Lokal manzilda tugma o'rnatilmaydi (logda aniq ogohlantirish chiqadi) — bu holda `/getsession` havolasi bilan brauzerda oching. Lokal sinov uchun: `cloudflared tunnel --url http://localhost:8000`
 - **Auth:** `X-Telegram-Init-Data` (HMAC tekshiruv) yoki `?session=<token>` — `app/web/web_app_auth.py`
 - **Bo'limlar:** 👤 Кабинет · 💰 Тўловлар (tasdiqlash bilan) · 📦 Юклар · 🔄 Қайтаришлар (tasdiqlash) · 🎁 Бонуслар · 💳 Баланс · 📄 Акт сверка (davr + **PDF yuklab olish**)
-- **Til:** uz/ru — botdagi til bilan sinxron (bazada saqlanadi). Demo rejimda namunaviy ma'lumot matnlari (tovar nomlari, omborlar, sabablar, izohlar) ham tanlangan tilda qaytadi
+- **Til:** uz/ru — botdagi til bilan sinxron (bazada saqlanadi)
 - **Dizayn:** Telegram temasiga moslashadi (dark/light), mobil tabbar + desktop sidebar
 - SPA: `app/templates/webapp.html`, JSON API: `app/web/web_app_api.py` (`/webapp/api/*`)
 
@@ -149,7 +147,6 @@ python app.py
 | `DATABASE_URL` | `sqlite+aiosqlite:///app.db` | Database connection string |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | Server bind |
 | `LOG_LEVEL` | `INFO` | Logging level |
-| `SUPPLIER_MOCK_FALLBACK` | `1` | 1C tayyor bo'lmagan endpoint uchun mock ma'lumot |
 | `WEBAPP_URL` | *(bo'sh)* | WebApp tashqi manzili — **`https://<domen>`** bo'lsagina Telegram menyu tugmasi o'rnatiladi; bo'sh bo'lsa WebApp o'chiq |
 | `AUTH_API_BASE` | … | Panel login uchun tashqi auth API |
 | `SESSION_SECRET_KEY` | change me | Panel session imzosi |
@@ -158,7 +155,7 @@ python app.py
 
 ### Yangi 1C endpoint qo'shish
 1. `docs/1C_SUPPLIER_API.md` ga spetsifikatsiya yozing
-2. `app/services/supplier_api.py` ga metod (+ `EXPECTED_SHAPES`) va kerak bo'lsa `mock_data.py` ga mock qo'shing
+2. `app/services/supplier_api.py` ga metod va `EXPECTED_SHAPES` ga kutilgan javob shaklini qo'shing
 3. `app/handlers/router.py` da handler yozing; matnlarni `app/i18n.py` ga ikkala tilda qo'shing
 
 ## License

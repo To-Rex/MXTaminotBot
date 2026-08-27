@@ -77,7 +77,6 @@ _LABELS = {
         "debit": "Дебет", "credit": "Кредит",
         "total": "Жами айланма",
         "sum": "сўм",
-        "mock": "Диққат: демо режим — намунавий маълумотлар (1C уланмаган).",
     },
     "ru": {
         "title": "АКТ СВЕРКИ",
@@ -90,7 +89,6 @@ _LABELS = {
         "debit": "Дебет", "credit": "Кредит",
         "total": "Итого обороты",
         "sum": "сум",
-        "mock": "Внимание: демо-режим — демонстрационные данные (1C не подключена).",
     },
 }
 
@@ -134,11 +132,6 @@ def build_akt_pdf(akt: dict, lang: str = "uz") -> bytes:
     pdf.ln(6)
     pdf.cell(0, 6, tr(f"{L['generated']}: {datetime.now().strftime('%d.%m.%Y %H:%M')}"))
     pdf.ln(6)
-    if akt.get("_mock"):
-        pdf.set_text_color(180, 80, 0)
-        pdf.cell(0, 6, tr(L["mock"]))
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(6)
     pdf.ln(2)
 
     pdf.set_font(font, "B", 10)

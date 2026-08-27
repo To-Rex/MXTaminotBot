@@ -11,8 +11,8 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-MAX_ENTRIES = 300
-_BODY_LIMIT = 4000  # chars kept per body/response
+MAX_ENTRIES = 1000
+_BODY_LIMIT = 20000  # chars kept per body/response (to'liq javob ko'rinishi uchun)
 
 _entries: deque = deque(maxlen=MAX_ENTRIES)
 _seq = itertools.count(1)
@@ -60,7 +60,7 @@ def record(
         "status_code": status_code,
         "response_body": _clip(response_body),
         "outcome": outcome,
-        "error": error[:500] if error else "",
+        "error": error[:1000] if error else "",
         "duration_ms": round(duration_ms, 1) if duration_ms is not None else None,
         "expected": _clip(expected) if expected is not None else None,
     }
@@ -75,7 +75,7 @@ def amend_last(endpoint: str, outcome: str, error: str = "", expected: Any = Non
             if e["endpoint"] == endpoint:
                 e["outcome"] = outcome
                 if error:
-                    e["error"] = error[:500]
+                    e["error"] = error[:1000]
                 if expected is not None:
                     e["expected"] = _clip(expected)
                 break

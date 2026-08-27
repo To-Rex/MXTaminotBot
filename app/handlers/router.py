@@ -8,8 +8,9 @@ Bo'limlar (TZ):
   5. 🎁 Бонуслар — ҳисобланган / фойдаланилган / қолган
   6. 💳 Баланс — жорий баланс
   7. 📄 Акт сверка — давр танлаш, кўриш, PDF
-Data: ``SupplierService`` (1C HTTP-servis, docs/1C_SUPPLIER_API.md). 1C da hali
-tayyor bo'lmagan endpointlar mock ma'lumot bilan ishlaydi (SUPPLIER_MOCK_FALLBACK).
+Data: ``SupplierService`` (1C HTTP-servis, docs/1C_SUPPLIER_API.md) — barcha
+ma'lumot faqat 1C dan olinadi. 1C javob bermasa (404 / bo'sh javob / tarmoq
+xatosi) foydalanuvchiga xatolik haqida xabar beriladi, tafsiloti /panel/api-logs da.
 """
 import logging
 import re
@@ -206,8 +207,6 @@ def create_router(
                 pass
         await target.answer(text, reply_markup=kb)
 
-    def _mock_suffix(lang: str, mocked: bool) -> str:
-        return "\n\n" + t(lang, "mock_notice") if mocked else ""
 
     # ════════════════════════════════════════════════════════════════════
     # 1. РЎЙХАТДАН ЎТИШ (TZ 1)
@@ -276,8 +275,6 @@ def create_router(
             await _save_user(message.from_user.id, phone, supplier_id, lang)
             name = result.get("name") or ""
             text = t(lang, "registered_ok", name=f", {name}" if name else "")
-            if result.get("_mock"):
-                text += _mock_suffix(lang, True)
             await message.answer(text, reply_markup=main_menu_keyboard(lang))
         else:
             await message.answer(t(lang, "supplier_not_found"), reply_markup=phone_keyboard(lang))
@@ -363,12 +360,12 @@ def create_router(
             return
         user = await _get_user(message.from_user.id)
         phone = (user.phone_number if user else "") or ""
-        cab = await svc.get_cabinet(*creds, supplier_id, phone=phone, lang=lang)
+        cab = await svc.get_cabinet(*creds, supplier_id, phone=phone)
         bal = await svc.get_balance(*creds, supplier_id)
-        bon = await svc.get_bonuses(*creds, supplier_id, lang)
-        shipments = await svc.get_shipments(*creds, supplier_id, lang)
-        payments = await svc.get_payments(*creds, supplier_id, lang)
-        returns = await svc.get_returns(*creds, supplier_id, lang)
+        bon = await svc.get_bonuses(*creds, supplier_id)
+        shipments = await svc.get_shipments(*creds, supplier_id)
+        payments = await svc.get_payments(*creds, supplier_id)
+        returns = await svc.get_returns(*creds, supplier_id)
         pending = (sum(1 for p in payments if p["status"] == "pending")
                    + sum(1 for r in returns if r["status"] == "pending"))
         confirmed_paid = sum(p["amount"] for p in payments if p["status"] == "confirmed")
@@ -394,8 +391,7 @@ def create_router(
              InlineKeyboardButton(text=t(lang, "btn_returns"), callback_data="returns_list")],
             [InlineKeyboardButton(text=t(lang, "btn_shipments"), callback_data="shipments_list")],
         ])
-        mocked = any(x.get("_mock") for x in (cab, bal, bon))
-        await message.answer("\n".join(lines) + _mock_suffix(lang, mocked), reply_markup=kb)
+        await message.answer("\n".join(lines), reply_markup=kb)
 
     # ════════════════════════════════════════════════════════════════════
     # 2. 💰 ТЎЛОВЛАР (TZ 2.1)
@@ -419,7 +415,6 @@ def create_router(
             text=f"{STATUS_ICON[p['status']]} {fmt_date(p['date'])} — {fmt_money(p['amount'])}",
             callback_data=f"pmt_{p['payment_id']}",
         )] for p in payments[:15]]
-        lines.append(_mock_suffix(lang, any(p.get("_mock") for p in payments)).strip())
         return "\n".join(l for l in lines if l is not None), InlineKeyboardMarkup(inline_keyboard=buttons)
 
     def _payment_text(lang: str, p: dict) -> str:
@@ -435,7 +430,7 @@ def create_router(
             lines.append(f"▪️ {p['confirmed_at'].strftime('%d.%m.%Y %H:%M')}")
         if p.get("note"):
             lines.append(f"▪️ <b>{t(lang, 'f_note')}:</b> {p['note']}")
-        return "\n".join(lines) + _mock_suffix(lang, p.get("_mock", False))
+        return "\n".join(lines)
 
     def _payment_kb(lang: str, p: dict) -> InlineKeyboardMarkup:
         rows = []
@@ -451,7 +446,7 @@ def create_router(
         supplier_id, lang = await _require_supplier(message)
         if not supplier_id:
             return
-        payments = await svc.get_payments(*creds, supplier_id, lang)
+        payments = await svc.get_payments(*creds, supplier_id)
         text, kb = _payments_view(lang, payments)
         await message.answer(text, reply_markup=kb)
 
@@ -461,7 +456,7 @@ def create_router(
         if not supplier_id:
             return
         await callback.answer()
-        payments = await svc.get_payments(*creds, supplier_id, lang)
+        payments = await svc.get_payments(*creds, supplier_id)
         text, kb = _payments_view(lang, payments)
         await _answer_or_edit(callback.message, text, kb, edit=True)
 
@@ -471,7 +466,7 @@ def create_router(
         if not supplier_id:
             return
         payment_id = int(callback.data.split("_", 1)[1])
-        p = await svc.get_payment(*creds, supplier_id, payment_id, lang)
+        p = await svc.get_payment(*creds, supplier_id, payment_id)
         if not p:
             await callback.answer(t(lang, "not_found"), show_alert=True)
             return
@@ -490,11 +485,11 @@ def create_router(
             await callback.answer(t(lang, "confirm_failed"), show_alert=True)
             return
         await callback.answer("✅")
-        p = await svc.get_payment(*creds, supplier_id, payment_id, lang)
+        p = await svc.get_payment(*creds, supplier_id, payment_id)
         if p:
             await _answer_or_edit(callback.message, _payment_text(lang, p), _payment_kb(lang, p), edit=True)
             await callback.message.answer(
-                t(lang, "payment_confirmed", doc=p["doc_number"]) + _mock_suffix(lang, result.get("_mock", False))
+                t(lang, "payment_confirmed", doc=p["doc_number"])
             )
 
     # ════════════════════════════════════════════════════════════════════
@@ -512,7 +507,6 @@ def create_router(
             text=f"📦 {fmt_date(s['date'])} • {s['doc_number']} — {fmt_money(s['total'])}",
             callback_data=f"shp_{s['shipment_id']}",
         )] for s in shipments[:15]]
-        lines.append(_mock_suffix(lang, any(s.get("_mock") for s in shipments)).strip())
         return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
 
     def _shipment_text(lang: str, s: dict) -> str:
@@ -527,14 +521,14 @@ def create_router(
         for p in s["products"]:
             lines.append(f"  • {p['name']} × {p['qty']} — {fmt_money(p['sum'])}")
         lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_money(s['total'])}"]
-        return "\n".join(lines) + _mock_suffix(lang, s.get("_mock", False))
+        return "\n".join(lines)
 
     @router.message(F.text.in_(_both("btn_shipments")))
     async def shipments_handler(message: Message):
         supplier_id, lang = await _require_supplier(message)
         if not supplier_id:
             return
-        shipments = await svc.get_shipments(*creds, supplier_id, lang)
+        shipments = await svc.get_shipments(*creds, supplier_id)
         text, kb = _shipments_view(lang, shipments)
         await message.answer(text, reply_markup=kb)
 
@@ -544,7 +538,7 @@ def create_router(
         if not supplier_id:
             return
         await callback.answer()
-        shipments = await svc.get_shipments(*creds, supplier_id, lang)
+        shipments = await svc.get_shipments(*creds, supplier_id)
         text, kb = _shipments_view(lang, shipments)
         await _answer_or_edit(callback.message, text, kb, edit=True)
 
@@ -554,7 +548,7 @@ def create_router(
         if not supplier_id:
             return
         shipment_id = int(callback.data.split("_", 1)[1])
-        s = await svc.get_shipment(*creds, supplier_id, shipment_id, lang)
+        s = await svc.get_shipment(*creds, supplier_id, shipment_id)
         if not s:
             await callback.answer(t(lang, "not_found"), show_alert=True)
             return
@@ -580,7 +574,6 @@ def create_router(
             text=f"{STATUS_ICON[r['status']]} {fmt_date(r['date'])} • {r['doc_number']} — {fmt_money(r['total'])}",
             callback_data=f"ret_{r['return_id']}",
         )] for r in returns[:15]]
-        lines.append(_mock_suffix(lang, any(r.get("_mock") for r in returns)).strip())
         return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
 
     def _return_text(lang: str, r: dict) -> str:
@@ -598,7 +591,7 @@ def create_router(
         for p in r["products"]:
             lines.append(f"  • {p['name']} × {p['qty']} — {fmt_money(p['sum'])}")
         lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_money(r['total'])}"]
-        return "\n".join(lines) + _mock_suffix(lang, r.get("_mock", False))
+        return "\n".join(lines)
 
     def _return_kb(lang: str, r: dict) -> InlineKeyboardMarkup:
         rows = []
@@ -614,7 +607,7 @@ def create_router(
         supplier_id, lang = await _require_supplier(message)
         if not supplier_id:
             return
-        returns = await svc.get_returns(*creds, supplier_id, lang)
+        returns = await svc.get_returns(*creds, supplier_id)
         text, kb = _returns_view(lang, returns)
         await message.answer(text, reply_markup=kb)
 
@@ -624,7 +617,7 @@ def create_router(
         if not supplier_id:
             return
         await callback.answer()
-        returns = await svc.get_returns(*creds, supplier_id, lang)
+        returns = await svc.get_returns(*creds, supplier_id)
         text, kb = _returns_view(lang, returns)
         await _answer_or_edit(callback.message, text, kb, edit=True)
 
@@ -634,7 +627,7 @@ def create_router(
         if not supplier_id:
             return
         return_id = int(callback.data.split("_", 1)[1])
-        r = await svc.get_return(*creds, supplier_id, return_id, lang)
+        r = await svc.get_return(*creds, supplier_id, return_id)
         if not r:
             await callback.answer(t(lang, "not_found"), show_alert=True)
             return
@@ -653,11 +646,11 @@ def create_router(
             await callback.answer(t(lang, "confirm_failed"), show_alert=True)
             return
         await callback.answer("✅")
-        r = await svc.get_return(*creds, supplier_id, return_id, lang)
+        r = await svc.get_return(*creds, supplier_id, return_id)
         if r:
             await _answer_or_edit(callback.message, _return_text(lang, r), _return_kb(lang, r), edit=True)
             await callback.message.answer(
-                t(lang, "return_confirmed", doc=r["doc_number"]) + _mock_suffix(lang, result.get("_mock", False))
+                t(lang, "return_confirmed", doc=r["doc_number"])
             )
 
     # ════════════════════════════════════════════════════════════════════
@@ -668,7 +661,7 @@ def create_router(
         supplier_id, lang = await _require_supplier(message)
         if not supplier_id:
             return
-        b = await svc.get_bonuses(*creds, supplier_id, lang)
+        b = await svc.get_bonuses(*creds, supplier_id)
         lines = [
             t(lang, "bonuses_title"), "",
             f"➕ <b>{t(lang, 'bonus_accrued')}:</b> {fmt_money(b['accrued'])}",
@@ -683,7 +676,7 @@ def create_router(
                              + (f"\n   <i>{i['note']}</i>" if i.get("note") else ""))
         else:
             lines += ["", t(lang, "bonuses_empty")]
-        await message.answer("\n".join(lines) + _mock_suffix(lang, b.get("_mock", False)))
+        await message.answer("\n".join(lines))
 
     # ════════════════════════════════════════════════════════════════════
     # 6. 💳 БАЛАНС (TZ 2.5)
@@ -703,7 +696,7 @@ def create_router(
             hint,
             f"🕘 {t(lang, 'balance_as_of')}: {b['as_of'].strftime('%d.%m.%Y %H:%M')}",
         ]
-        await message.answer("\n".join(lines) + _mock_suffix(lang, b.get("_mock", False)))
+        await message.answer("\n".join(lines))
 
     # ════════════════════════════════════════════════════════════════════
     # 7. 📄 АКТ СВЕРКА (TZ 2.6)
@@ -768,7 +761,7 @@ def create_router(
                 lines.append(f"• {fmt_date(r['date'])} • {r['doc']} • {r['note']} — <b>{amount}</b>")
             if len(rows) > AKT_ROWS_LIMIT:
                 lines.append(t(lang, "akt_more_rows", n=len(rows) - AKT_ROWS_LIMIT))
-        return "\n".join(lines) + _mock_suffix(lang, akt.get("_mock", False))
+        return "\n".join(lines)
 
     def _akt_kb(lang: str, d1: date, d2: date) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[
@@ -779,7 +772,7 @@ def create_router(
 
     async def _show_akt(target: Message, supplier_id: str, lang: str,
                         d1: date, d2: date, edit: bool = False):
-        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2, lang)
+        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2)
         await _answer_or_edit(target, _akt_text(lang, akt), _akt_kb(lang, d1, d2), edit=edit)
 
     @router.callback_query(F.data == "akt_custom")
@@ -830,7 +823,7 @@ def create_router(
         _, d1s, d2s = callback.data.split("_")
         d1, d2 = date.fromisoformat(d1s), date.fromisoformat(d2s)
         await callback.answer("📄 …")
-        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2, lang)
+        akt = await svc.get_akt_sverka(*creds, supplier_id, d1, d2)
         try:
             pdf_bytes = build_akt_pdf(akt, lang)
         except Exception as e:
@@ -891,7 +884,7 @@ def create_router(
     async def on_service_unavailable(event: ErrorEvent):
         exc: ServiceUnavailable = event.exception  # type: ignore[assignment]
         logger.warning("1C service unavailable: %s (%s)", exc.endpoint, exc.reason)
-        await _reply_error(event, "service_soon")
+        await _reply_error(event, "service_error")
 
     @router.errors(ExceptionTypeFilter(SupplierError))
     async def on_supplier_error(event: ErrorEvent):

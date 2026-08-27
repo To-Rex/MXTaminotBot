@@ -246,8 +246,7 @@ uz: {
   period: 'Давр', thisM: 'Жорий ой', prevM: 'Ўтган ой', m3: 'Охирги 3 ой', year: 'Жорий йил', custom: 'Бошқа',
   from: 'Дан', to: 'Гача', show: 'Кўрсатиш', opening: 'Давр бошида', closing: 'Давр охирида',
   debit: 'Дебет айланма', credit: 'Кредит айланма', moves: 'Ҳаракатлар', pdf: '📄 PDF юклаб олиш',
-  demo: 'Демо режим: 1C уланмаган, намунавий маълумотлар кўрсатилмоқда.',
-  soonB: 'Бу хизмат тез кунда ишга тушади', soonS: 'Бўлим ҳозир тайёрланмоқда. Бироздан сўнг қайта уриниб кўринг.',
+  svcErrB: 'Маълумот олинмади', svcErrS: '1C билан алоқа йўқ ёки хизмат жавоб бермаяпти. Бироздан сўнг қайта уриниб кўринг.',
   errB: 'Хатолик', retry: 'Қайта уриниш', welcome: 'Хуш келибсиз',
   regText: 'Таъминотчи кабинетига кириш учун телефон рақамингизни тасдиқланг — рақам 1C базаси билан солиштирилади.',
   phoneLbl: 'Телефон рақам', enter: 'Кириш', checking: 'Текширилмоқда…', phoneReq: 'Телефон рақамни киритинг.',
@@ -279,8 +278,7 @@ ru: {
   period: 'Период', thisM: 'Текущий месяц', prevM: 'Прошлый месяц', m3: 'Последние 3 мес.', year: 'Текущий год', custom: 'Другой',
   from: 'С', to: 'По', show: 'Показать', opening: 'На начало', closing: 'На конец',
   debit: 'Оборот по дебету', credit: 'Оборот по кредиту', moves: 'Движения', pdf: '📄 Скачать PDF',
-  demo: 'Демо-режим: 1C не подключена, показаны демонстрационные данные.',
-  soonB: 'Этот сервис скоро заработает', soonS: 'Раздел пока готовится. Попробуйте немного позже.',
+  svcErrB: 'Не удалось получить данные', svcErrS: 'Нет связи с 1C или сервис не отвечает. Попробуйте позже.',
   errB: 'Ошибка', retry: 'Повторить', welcome: 'Добро пожаловать',
   regText: 'Для входа в кабинет поставщика подтвердите номер телефона — он будет сверен с базой 1C.',
   phoneLbl: 'Номер телефона', enter: 'Войти', checking: 'Проверка…', phoneReq: 'Введите номер телефона.',
@@ -350,13 +348,12 @@ const sum = () => lng === 'ru' ? 'сум' : 'сўм';
 const money = n => `<span class="num">${Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ')}</span> ${sum()}`;
 const moneyT = n => Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ') + ' ' + sum();
 const note = (t, m) => `<div class="note ${t}">${m}</div>`;
-const demoNote = flag => flag ? note('warn', `<span>ℹ️</span><span>${L('demo')}</span>`) : '';
 const skeleton = (n = 3) => Array.from({ length: n }, () => `<div class="sk-card"><div class="sk sk-line" style="width:45%"></div><div class="sk sk-line" style="width:80%"></div><div class="sk sk-line" style="width:60%;margin:0"></div></div>`).join('');
 const load = id => { $(id).innerHTML = skeleton(); };
 const empty = ([em, b, s]) => `<div class="empty"><div class="em">${em}</div><b>${b}</b><span>${s}</span></div>`;
 function errBox(e, retry) {
   if (e && e.code === 'SERVICE_UNAVAILABLE') {
-    return `<div class="empty"><div class="em">🛠</div><b>${L('soonB')}</b><span>${L('soonS')}</span>${retry ? `<div style="margin-top:14px"><button class="btn line" onclick="${retry}">${L('retry')}</button></div>` : ''}</div>`;
+    return `<div class="empty"><div class="em">⚠️</div><b>${L('svcErrB')}</b><span>${L('svcErrS')}</span>${retry ? `<div style="margin-top:14px"><button class="btn line" onclick="${retry}">${L('retry')}</button></div>` : ''}</div>`;
   }
   return `<div class="empty"><div class="em">⚠️</div><b>${L('errB')}</b><span>${esc(e && e.message || '')}</span>${retry ? `<div style="margin-top:14px"><button class="btn line" onclick="${retry}">${L('retry')}</button></div>` : ''}</div>`;
 }
@@ -453,7 +450,6 @@ async function loadCabinet() {
         <div><div class="eyebrow">${L('hello')}</div><h2 class="t" style="margin:2px 0 0">${L('cabinet')}</h2></div>
         <span class="tag active">${esc(c.status || '')}</span>
       </div>
-      ${demoNote(c._mock)}
       <div class="hero">
         <div class="eyebrow">${L('curBalance')}</div>
         <div class="big num ${neg ? 'neg' : ''}">${money(c.balance)}</div>
@@ -495,7 +491,6 @@ async function loadPayments() {
   try {
     const d = await api('GET', '/payments');
     $('viewPayments').innerHTML = `<div class="stagger"><h2 class="t">${L('payments')}</h2>
-      ${demoNote(d._mock)}
       <div class="grid2"><div class="tile paid"><div class="l">${L('stConfirmed')}</div><div class="n">${money(d.confirmed_total)}</div></div>
       <div class="tile ${d.pending_count ? 'late' : ''}"><div class="l">${L('pendingN')}</div><div class="n num">${d.pending_count}</div></div></div>
       ${d.payments.length ? d.payments.map(paymentCard).join('') : empty(L('emptyPay'))}
@@ -517,7 +512,6 @@ async function loadShipments() {
   try {
     const d = await api('GET', '/shipments');
     $('viewShipments').innerHTML = `<div class="stagger"><h2 class="t">${L('shipmentsFull')}</h2>
-      ${demoNote(d._mock)}
       <div class="grid2"><div class="tile"><div class="l">${L('shipmentsFull')}</div><div class="n num">${d.count}</div></div>
       <div class="tile"><div class="l">${L('total')}</div><div class="n">${money(d.total)}</div></div></div>
       ${d.shipments.length ? d.shipments.map(s => `<div class="card">
@@ -536,7 +530,6 @@ async function loadReturns() {
   try {
     const d = await api('GET', '/returns');
     $('viewReturns').innerHTML = `<div class="stagger"><h2 class="t">${L('returns')}</h2>
-      ${demoNote(d._mock)}
       ${d.pending_count ? note('warn', `<span>⏳</span><span>${L('pendingN')}: <b>${d.pending_count}</b></span>`) : ''}
       ${d.returns.length ? d.returns.map(r => `<div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b class="num">${r.date}</b>${tagOf(r.status)}</div>
@@ -564,7 +557,6 @@ async function loadBonuses() {
   try {
     const d = await api('GET', '/bonuses');
     $('viewBonuses').innerHTML = `<div class="stagger"><h2 class="t">${L('bonuses')}</h2>
-      ${demoNote(d._mock)}
       <div class="hero"><div class="eyebrow">${L('remaining')}</div><div class="big num">${money(d.remaining)}</div></div>
       <div class="grid2"><div class="tile paid"><div class="l">➕ ${L('accrued')}</div><div class="n">${money(d.accrued)}</div></div>
       <div class="tile"><div class="l">➖ ${L('used')}</div><div class="n">${money(d.used)}</div></div></div>
@@ -584,7 +576,6 @@ async function loadBalance() {
     const d = await api('GET', '/balance');
     const neg = d.balance < 0;
     $('viewBalance').innerHTML = `<div class="stagger"><h2 class="t">${L('balance')}</h2>
-      ${demoNote(d._mock)}
       <div class="hero"><div class="eyebrow">${L('curBalance')}</div>
         <div class="big num ${neg ? 'neg' : ''}">${money(d.balance)}</div>
         <span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span></div>
@@ -642,7 +633,6 @@ async function renderAkt() {
     const pdfPath = `/akt-sverka/pdf?date_from=${d.date_from_iso}&date_to=${d.date_to_iso}&lang=${lng}`;
     $('viewAkt').innerHTML = `<h2 class="t">${L('akt')}</h2>${aktChips()}
       <div class="stagger">
-      ${demoNote(d._mock)}
       <div class="card"><div class="kv" style="padding-top:0"><span class="k">${L('period')}</span><span class="v num">${d.date_from} — ${d.date_to}</span></div>
         <div class="kv"><span class="k">${L('opening')}</span><span class="v">${money(d.opening_balance)}</span></div>
         <div class="kv"><span class="k">➕ ${L('debit')}</span><span class="v" style="color:var(--paid)">${money(d.total_debit)}</span></div>

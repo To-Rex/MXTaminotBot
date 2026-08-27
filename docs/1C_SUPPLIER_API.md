@@ -2,12 +2,11 @@
 
 Telegram bot (taminotchining shaxsiy kabineti) uchun 1C:Enterprise tomonida yaratilishi kerak bo'lgan HTTP-servis.
 
-Bot **barcha** endpointlarga ulangan (`app/services/supplier_api.py`). 1C da hali tayyor bo'lmagan endpoint (404/5xx, bo'sh yoki noto'g'ri shakldagi javob) uchun:
+Bot **barcha** endpointlarga ulangan (`app/services/supplier_api.py`) va **barcha ma'lumotni faqat 1C dan** oladi — namunaviy (mock/demo) ma'lumot yo'q.
 
-- `SUPPLIER_MOCK_FALLBACK=1` (default) — bot **namunaviy (mock) ma'lumot** bilan davom etadi va foydalanuvchiga «Демо режим» belgisi ko'rsatadi;
-- `SUPPLIER_MOCK_FALLBACK=0` — foydalanuvchiga «Бу хизмат тез кунда ишга тушади» ko'rsatiladi.
-
-Endpoint 1C da tayyor bo'lgach bot **hech qanday o'zgarishsiz** real ma'lumot bilan ishlay boshlaydi.
+1C javob bermasa (404 / bo'sh javob / 5xx / tarmoq xatosi / noto'g'ri shakl) foydalanuvchiga xatolik haqida xabar ko'rsatiladi:
+«❌ Маълумот олинмади — 1C билан алоқа йўқ ёки хизмат жавоб бермаяпти», WebApp da esa `503 {"code": "SERVICE_UNAVAILABLE"}`.
+Xatolikning **to'liq tafsiloti** (URL, so'rov tanasi, kelgan javob, kutilgan shakl bilan taqqoslash) admin paneldagi `/panel/api-logs` sahifasida ko'rinadi.
 
 Bugungi kunda tayyor va botga ulangan (MX-Client-Bot bilan umumiy, `hs/client_bot/api/` ostida): **`checkNumber`** (1-bo'lim), **`getClientInfo`** (2-bo'lim). Qolganlari — `hs/supplier_bot/api/` ostida yaratilishi kerak.
 
@@ -101,7 +100,7 @@ Bot javobga bardoshli, lekin **standart qiymatlari** bor — 1C maydonni tushiri
 | Obyekt bitta elementli ro'yxatda kelsa (`[{…}]`) | ochib olinadi |
 | Hujjatda ko'rsatilmagan qo'shimcha maydonlar | e'tiborsiz qoldiriladi — javobga qo'shimcha maydon qo'shish xavfsiz |
 
-> Javob shakli umuman mos kelmasa (masalan ro'yxat o'rniga obyekt) bot uni «endpoint tayyor emas» deb hisoblaydi va `/panel/api-logs` da kutilgan shakl bilan yonma-yon ko'rsatadi.
+> Javob shakli umuman mos kelmasa (masalan ro'yxat o'rniga obyekt) bot foydalanuvchiga xatolik ko'rsatadi, `/panel/api-logs` da esa kelgan javob kutilgan shakl bilan yonma-yon chiqadi.
 
 ---
 
@@ -265,13 +264,13 @@ GET /hs/supplier_bot/api/getShipments?supplier_id=70123
 
 ## 5. To'lovlar (TZ 2.1)
 
-### 5.1 Ro'yxat — `GET getPayments`
+### 5.1 Ro'yxat — `GET getPaymentsSupplier`
 
 «💰 Тўловлар» — kompaniya taminotchiga qilgan to'lovlar. `pending` holatdagilar taminotchi tasdig'ini kutadi («men bu pulni oldim»).
 
 #### So'rov
 ```http
-GET /hs/supplier_bot/api/getPayments?supplier_id=70123
+GET /hs/supplier_bot/api/getPaymentsSupplier?supplier_id=70123
 ```
 
 | Parametr | Tip | Majburiy | Izoh |
@@ -333,7 +332,7 @@ POST /hs/supplier_bot/api/confirmPayment
 | Kalit | Tip | Majburiy | Izoh |
 |---|---|---|---|
 | `supplier_id` | id | ha | boshqa taminotchining to'lovi bo'lsa → `404 PAYMENT_NOT_FOUND` |
-| `payment_id` | id | ha | `getPayments` dagi kod |
+| `payment_id` | id | ha | `getPaymentsSupplier` dagi kod |
 | `chat_id` | string | yo'q | kim tasdiqlagani (Telegram id) — auditlash uchun |
 | `source` | enum | yo'q | `telegram_bot` (botdan) yoki `webapp` (Mini App / brauzer kabinetidan) — 1C qaysi kanaldan tasdiqlanganini qayd etsin |
 
@@ -532,7 +531,7 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 | `checkNumber` ✅ | `client_bot` | `check_number` → `APIService.register_device` | Рўйхатдан ўтиш (telefon) — MX-Client-Bot bilan bir xil |
 | `getClientInfo` ✅ | `client_bot` | `get_cabinet` | 👤 Кабинет (profil) |
 | `getBalance` | `supplier_bot` | `get_balance` | 💳 Баланс, 👤 Кабинет |
-| `getPayments` | `supplier_bot` | `get_payments` / `get_payment` | 💰 Тўловлар (ro'yxat, detallar, holat) |
+| `getPaymentsSupplier` | `supplier_bot` | `get_payments` / `get_payment` | 💰 Тўловлар (ro'yxat, detallar, holat) |
 | `confirmPayment` | `supplier_bot` | `confirm_payment` | 💰 Тўловни тасдиқлаш |
 | `getShipments` | `supplier_bot` | `get_shipments` / `get_shipment` | 📦 Берилган юклар |
 | `getReturns` | `supplier_bot` | `get_returns` / `get_return` | 🔄 Юк қайтариш (ro'yxat, detallar, holat) |
@@ -540,7 +539,7 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 | `getBonuses` | `supplier_bot` | `get_bonuses` | 🎁 Бонуслар, 👤 Кабинет |
 | `getAktSverka` | `supplier_bot` | `get_akt_sverka` | 📄 Акт сверка (+ PDF) |
 
-> **Bitta hujjat uchun alohida endpoint kerak emas:** hujjat tafsiloti (to'lov / yuk / qaytarish detallari) ro'yxat javobidan olinadi — bot `getPayments` / `getShipments` / `getReturns` natijasidan kerakli `*_id` ni o'zi filtrlaydi. Shuning uchun ro'yxat javobida **barcha** maydonlar (jumladan `products[]`) to'liq bo'lishi kerak.
+> **Bitta hujjat uchun alohida endpoint kerak emas:** hujjat tafsiloti (to'lov / yuk / qaytarish detallari) ro'yxat javobidan olinadi — bot `getPaymentsSupplier` / `getShipments` / `getReturns` natijasidan kerakli `*_id` ni o'zi filtrlaydi. Shuning uchun ro'yxat javobida **barcha** maydonlar (jumladan `products[]`) to'liq bo'lishi kerak.
 >
 > Har bir bo'lim bot va WebApp da bir xil ishlaydi — ikkalasi ham shu endpointlarga murojaat qiladi, farqi faqat tasdiqlashdagi `source` maydonida.
 

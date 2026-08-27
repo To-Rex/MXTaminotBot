@@ -57,13 +57,14 @@ app = FastAPI(title="Telegram Supplier Bot Manager", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY)
 
-SOON_MESSAGE = "Бу хизмат тез кунда ишга тушади. Ноқулайлик учун узр — бироздан сўнг қайта уриниб кўринг."
+SERVICE_ERROR_MESSAGE = ("Маълумот олинмади: 1C билан алоқа йўқ ёки хизмат жавоб бермаяпти. "
+                         "Бироздан сўнг қайта уриниб кўринг.")
 
 
 @app.exception_handler(ServiceUnavailable)
 async def _service_unavailable_handler(request: Request, exc: ServiceUnavailable):
     logger.warning("1C service unavailable: %s (%s)", exc.endpoint, exc.reason)
-    return JSONResponse(status_code=503, content={"detail": SOON_MESSAGE, "code": "SERVICE_UNAVAILABLE", "endpoint": exc.endpoint})
+    return JSONResponse(status_code=503, content={"detail": SERVICE_ERROR_MESSAGE, "code": "SERVICE_UNAVAILABLE", "endpoint": exc.endpoint})
 
 
 @app.exception_handler(SupplierError)
