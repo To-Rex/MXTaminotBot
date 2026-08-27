@@ -122,6 +122,17 @@ Access at `http://localhost:8000/panel` (login required — external auth API, f
 | **Create/Edit bot** | `/panel/bots/…` | Token, 1C `base_url` + login/parol |
 | **Statistics** | `/panel/bots/{id}/stats` | Foydalanuvchilar |
 | **API logs** | `/panel/api-logs` | 1C so'rov/javob jurnali (debug) |
+| **Export / Import** | `/panel/export` · `/panel/import` | Botlar va ro'yxatdan o'tgan taminotchilar zaxirasi (JSON) |
+
+### Import / Export
+
+Panel bosh sahifasida uchta tugma:
+
+- **⬇️ Export (JSON)** — barcha botlar (token, 1C manzili/login/parol) va ularga bog'langan foydalanuvchilar (`telegram_id`, telefon, `client_id`, til) bitta faylda. Serverni ko'chirish yoki zaxira uchun.
+- **⬇️ CSV** — Excel'da ko'rish uchun qisqa ro'yxat (parol va foydalanuvchilarsiz).
+- **⬆️ Import** — JSON faylni yuklaydi: botlar **token bo'yicha** solishtiriladi — mavjudi yangilanadi, yangisi qo'shiladi, hech narsa o'chirilmaydi. Foydalanuvchilar ham ko'chadi, ya'ni taminotchilar **qayta ro'yxatdan o'tmaydi**. Import so'ngida faol botlar yangi sozlama bilan qayta ishga tushiriladi.
+
+> ⚠️ Export fayli **bot tokenlari va 1C parollarini** o'z ichiga oladi — uni ochiq joyda saqlamang va git'ga qo'shmang.
 
 ## Getting Started
 

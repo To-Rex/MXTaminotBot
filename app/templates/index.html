@@ -3,8 +3,24 @@
 {% block content %}
 <div class="header-row">
     <h1>Botlar</h1>
-    <a href="/panel/bots/create" class="btn btn-primary">+ Yangi bot</a>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <a href="/panel/export" class="btn btn-sm btn-ghost" title="Barcha botlar va ro'yxatdan o'tgan taminotchilar — JSON zaxira">&#11015; Export (JSON)</a>
+        <a href="/panel/export.csv" class="btn btn-sm btn-ghost" title="Excel'da ko'rish uchun ro'yxat">&#11015; CSV</a>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('importFile').click()">&#11014; Import</button>
+        <a href="/panel/bots/create" class="btn btn-primary">+ Yangi bot</a>
+    </div>
 </div>
+
+<form id="importForm" method="post" action="/panel/import" enctype="multipart/form-data" style="display:none">
+    <input type="file" id="importFile" name="file" accept=".json,application/json"
+           onchange="if(this.files.length && confirm('«' + this.files[0].name + '» файлидан импорт қилинсинми?\n\nТокен бўйича мос келган ботлар янгиланади, янгилари қўшилади. Мавжуд ботлар ўчирилмайди.')) { document.getElementById('importForm').submit(); } else { this.value=''; }">
+</form>
+
+{% if flash %}
+<div class="card" style="border-left:4px solid {{ '#dc2626' if flash_kind == 'err' else '#059669' }};margin-bottom:16px">
+    <b>{{ '❌' if flash_kind == 'err' else '✅' }}</b> {{ flash }}
+</div>
+{% endif %}
 
 {% if bots %}
 <div class="table-wrap">

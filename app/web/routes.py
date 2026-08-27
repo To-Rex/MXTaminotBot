@@ -1,4 +1,9 @@
-from fastapi import APIRouter, Form, HTTPException, Request
+import csv
+import io
+import json
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -63,6 +68,8 @@ async def index(request: Request):
         "bots": bots,
         "user_counts": user_counts,
         "bot_manager": bm,
+        "flash": request.query_params.get("msg", ""),
+        "flash_kind": request.query_params.get("kind", "ok"),
     })
 
 
@@ -275,3 +282,144 @@ async def api_logs_data():
 async def api_logs_clear():
     api_log.clear()
     return {"success": True}
+
+
+# ── Import / Export (botlar + ro'yxatdan o'tgan taminotchilar) ──────────────
+EXPORT_FORMAT = "mx-taminot-bot/bots"
+EXPORT_VERSION = 1
+
+
+async def _collect_export() -> dict:
+    """Barcha botlar va ularga bog'langan foydalanuvchilar."""
+    async with async_session() as session:
+        bots = (await session.execute(select(Bot).order_by(Bot.id))).scalars().all()
+        users = (await session.execute(select(User).order_by(User.id))).scalars().all()
+    by_bot: dict[int, list] = {}
+    for u in users:
+        by_bot.setdefault(u.bot_id, []).append({
+            "telegram_id": u.telegram_id,
+            "phone_number": u.phone_number,
+            "client_id": u.client_id,
+            "language": u.language,
+        })
+    return {
+        "format": EXPORT_FORMAT,
+        "version": EXPORT_VERSION,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "bots": [{
+            "name": b.name,
+            "token": b.token,
+            "company_name": b.company_name or "",
+            "base_url": b.base_url or "",
+            "one_c_login": b.one_c_login or "",
+            "one_c_password": b.one_c_password or "",
+            "is_active": bool(b.is_active),
+            "users": by_bot.get(b.id, []),
+        } for b in bots],
+    }
+
+
+@router.get("/export")
+async def export_json():
+    """To'liq zaxira (JSON) — keyin shu fayl orqali qayta tiklash mumkin."""
+    data = await _collect_export()
+    body = json.dumps(data, ensure_ascii=False, indent=2)
+    name = f"mx-taminot-bots-{datetime.now().strftime('%Y%m%d-%H%M')}.json"
+    return Response(
+        content=body, media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/export.csv")
+async def export_csv():
+    """Excel'da ko'rish uchun (import uchun emas — parollar va foydalanuvchilar yo'q)."""
+    data = await _collect_export()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["name", "company_name", "base_url", "one_c_login", "is_active", "users"])
+    for b in data["bots"]:
+        w.writerow([b["name"], b["company_name"], b["base_url"], b["one_c_login"],
+                    "1" if b["is_active"] else "0", len(b["users"])])
+    name = f"mx-taminot-bots-{datetime.now().strftime('%Y%m%d-%H%M')}.csv"
+    return Response(
+        content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.post("/import")
+async def import_json(request: Request, file: UploadFile = File(...)):
+    """Zaxiradan tiklash / ko'chirish. Botlar `token` bo'yicha solishtiriladi:
+    mavjud bo'lsa yangilanadi, bo'lmasa yaratiladi. Foydalanuvchilar
+    (telegram_id) ham shu tarzda qo'shiladi — ular qayta ro'yxatdan o'tmaydi."""
+    raw = await file.read()
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return RedirectResponse(url="/panel?kind=err&msg=Fayl+JSON+emas", status_code=303)
+
+    bots_in = data.get("bots") if isinstance(data, dict) else (data if isinstance(data, list) else None)
+    if not isinstance(bots_in, list) or not bots_in:
+        return RedirectResponse(url="/panel?kind=err&msg=Faylda+bot+ma%27lumoti+topilmadi", status_code=303)
+
+    created = updated = users_added = skipped = 0
+    touched: list[int] = []
+    async with async_session() as session:
+        for item in bots_in:
+            if not isinstance(item, dict) or not str(item.get("token") or "").strip():
+                skipped += 1
+                continue
+            token = str(item["token"]).strip()
+            bot = (await session.execute(select(Bot).where(Bot.token == token))).scalar_one_or_none()
+            if bot is None:
+                bot = Bot(token=token)
+                session.add(bot)
+                created += 1
+            else:
+                updated += 1
+            bot.name = str(item.get("name") or bot.name or token[:10])
+            bot.company_name = str(item.get("company_name") or "")
+            bot.base_url = str(item.get("base_url") or "")
+            bot.one_c_login = str(item.get("one_c_login") or "")
+            bot.one_c_password = str(item.get("one_c_password") or "")
+            bot.is_active = bool(item.get("is_active", False))
+            await session.flush()
+
+            for u in item.get("users") or []:
+                if not isinstance(u, dict) or not u.get("telegram_id"):
+                    continue
+                tg = int(u["telegram_id"])
+                user = (await session.execute(
+                    select(User).where(User.telegram_id == tg, User.bot_id == bot.id)
+                )).scalar_one_or_none()
+                if user is None:
+                    user = User(telegram_id=tg, bot_id=bot.id)
+                    session.add(user)
+                    users_added += 1
+                user.phone_number = u.get("phone_number")
+                user.client_id = u.get("client_id")
+                lang = str(u.get("language") or "uz")
+                user.language = lang if lang in ("uz", "ru") else "uz"
+            touched.append(bot.id)
+        await session.commit()
+
+    # botlarni yangi sozlama bilan qayta ishga tushiramiz
+    bm = _bot_manager(request)
+    async with async_session() as session:
+        for bot_id in touched:
+            bot = (await session.execute(select(Bot).where(Bot.id == bot_id))).scalar_one_or_none()
+            if bot is None:
+                continue
+            try:
+                if bot.is_active:
+                    await bm.restart_bot(bot)
+                else:
+                    await bm.stop_bot(bot.id)
+            except Exception:  # noto'g'ri token va h.k. — import baribir saqlanadi
+                pass
+
+    msg = f"Import: {created} ta yangi bot, {updated} ta yangilandi, {users_added} ta foydalanuvchi"
+    if skipped:
+        msg += f", {skipped} ta o'tkazib yuborildi"
+    return RedirectResponse(url=f"/panel?kind=ok&msg={msg.replace(' ', '+')}", status_code=303)

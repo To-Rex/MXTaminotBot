@@ -16,7 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 def verify_telegram_init_data(init_data: str, bot_token: str) -> bool:
-    parsed = urllib.parse.parse_qs(init_data)
+    """Telegram initData imzosini tekshirish (HMAC-SHA256).
+
+    ``keep_blank_values=True`` MUHIM: Telegram bo'sh qiymatli maydon ham
+    yuborishi mumkin (masalan ``start_param=``), u ham imzoga kiradi.
+    Bo'sh maydonlar tashlab yuborilsa hash mos kelmay, haqiqiy foydalanuvchi ham
+    "Invalid Telegram init data" xatosini olardi.
+    """
+    parsed = urllib.parse.parse_qs(init_data, keep_blank_values=True)
     hash_val = parsed.pop("hash", [None])[0]
     if not hash_val:
         return False
@@ -43,7 +50,7 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> bool:
 
 
 def _parse_init_user(init_data: str) -> Optional[dict]:
-    parsed = urllib.parse.parse_qs(init_data)
+    parsed = urllib.parse.parse_qs(init_data, keep_blank_values=True)
     user_raw = parsed.get("user", [None])[0]
     if not user_raw:
         return None
@@ -124,7 +131,24 @@ async def authenticate_webapp_user(
         raise HTTPException(status_code=400, detail="Bot not found")
 
     if not verify_telegram_init_data(x_init_data, bot.token):
-        raise HTTPException(status_code=401, detail="Invalid Telegram init data")
+        # Havoladagi bot_id boshqa botniki bo'lishi mumkin (masalan menyu tugmasi
+        # eski bot uchun sozlangan). Shuning uchun qolgan botlar tokenini ham
+        # sinab ko'ramiz — imzo qaysi bot tokeni bilan mos kelsa, o'sha bot
+        # konteksti ishlatiladi (imzo tekshiruvi baribir majburiy).
+        async with async_session() as session:
+            others = (await session.execute(select(Bot).where(Bot.id != bot_id))).scalars().all()
+        match = next((b for b in others if verify_telegram_init_data(x_init_data, b.token)), None)
+        if match is None:
+            logger.warning(
+                "webapp auth: initData imzosi mos kelmadi (bot_id=%s, %d ta bot sinaldi, "
+                "initData uzunligi=%d, maydonlar=%s)",
+                bot_id, len(others) + 1, len(x_init_data),
+                ",".join(sorted(urllib.parse.parse_qs(x_init_data, keep_blank_values=True))),
+            )
+            raise HTTPException(status_code=401, detail="Invalid Telegram init data")
+        logger.warning("webapp auth: havolada bot_id=%s edi, imzo bot_id=%s ga mos keldi",
+                       bot_id, match.id)
+        bot = match
 
     user_data = _parse_init_user(x_init_data)
     if not user_data or "id" not in user_data:
