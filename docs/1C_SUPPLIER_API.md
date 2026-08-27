@@ -36,6 +36,7 @@ Bugungi kunda tayyor va botga ulangan (MX-Client-Bot bilan umumiy, `hs/client_bo
 | `datetime` | `YYYY-MM-DDTHH:MM:SS` (Toshkent vaqti) | `"2026-08-20T14:52:10"` |
 | `money` | son (float yoki int), **so'mda**, tiyinsiz, matn EMAS | `5400000` yoki `5400000.0` |
 | `id` | butun son (1C ichki kod) | `70123` |
+| `currency` | valyuta kodi, katta harflarda (ISO): `UZS` · `USD` · `EUR` | `"USD"` |
 | `string` | UTF-8 matn | `"TL-260812-101"` |
 | `bool` | `true` / `false` | |
 | bo'sh qiymat | `null` (majburiy bo'lmagan maydonlar uchun) | |
@@ -240,14 +241,15 @@ GET /hs/supplier_bot/api/getShipments?supplier_id=70123
 ```json
 [
   {
-    "shipment_id": 41001,
+    "shipment_id": 100000002,
     "doc_number": "YT-2608-0011",
-    "date": "2026-08-10",
-    "warehouse": "Марказий омбор",
-    "total": 8200000,
+    "date": "2026-08-27",
+    "warehouse": "Асосий омбор",
+    "total": 46800,
+    "cry": "USD",
     "products": [
-      { "product_id": 1001, "name": "Un oliy nav 50kg", "qty": 20, "price": 285000, "sum": 5700000 },
-      { "product_id": 1003, "name": "O'simlik yog'i 5L", "qty": 27, "price": 92000,  "sum": 2484000 }
+      { "product_id": 4, "name": "Авалон Кондиционер 32", "qty": 100, "price": 450, "sum": 45000 },
+      { "product_id": 3, "name": "Телевизор",             "qty": 15,  "price": 120, "sum": 1800 }
     ]
   }
 ]
@@ -260,7 +262,17 @@ GET /hs/supplier_bot/api/getShipments?supplier_id=70123
 | `date` | date | yuk berilgan (kirim qilingan) sana |
 | `warehouse` | string | qaysi omborga qabul qilingan (bo'lmasa `""`) |
 | `total` | money | hujjat jami summasi (`products[].sum` yig'indisi) |
+| **`cry`** | string | **hujjat valyutasi**: `UZS`, `USD`, `EUR`… Berilmasa `UZS` deb hisoblanadi. `currency` nomi bilan yuborilsa ham qabul qilinadi |
 | `products[]` | list | tovarlar (quyida) |
+
+> **Valyuta hujjat darajasida:** `price` va `sum` shu hujjatning `cry` sida hisoblanadi —
+> tovar ichida alohida valyuta ko'rsatish shart emas.
+>
+> **Bot qanday jamlaydi:** turli valyutadagi hujjatlar **qo'shilmaydi**, har biri alohida chiqadi —
+> `Жами: 150 000 000 сўм · 46 800 USD`. `UZS` butun songacha yaxlitlanadi, boshqa valyutalarda sent ko'rsatiladi.
+>
+> Xuddi shu `cry` maydoni **`getReturns`** va **`getPaymentsSupplier`** javoblarida ham qabul qilinadi
+> (ixtiyoriy, berilmasa `UZS`) — 1C da valyutali qaytarish/to'lov paydo bo'lsa, bot uni o'zi to'g'ri ko'rsatadi.
 
 `products[]` — har bir element:
 
@@ -269,7 +281,7 @@ GET /hs/supplier_bot/api/getShipments?supplier_id=70123
 | `product_id` | id | tovar kodi |
 | `name` | string | tovar nomi |
 | `qty` | number | miqdor |
-| `price` | money | birlik narxi (kirim narxi) |
+| `price` | money | **birlik narxi** — bot uni hujjat tafsilotida ko'rsatadi: «Авалон Кондиционер 32 — 100 × 450 USD = 45 000 USD». Shuning uchun to'ldirilgan bo'lsin (0 bo'lsa faqat miqdor va summa chiqadi) |
 | `sum` | money | `price × qty` |
 
 ---

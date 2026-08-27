@@ -53,6 +53,18 @@ STATUS_ICON = {"pending": "⏳", "confirmed": "✅", "cancelled": "❌"}
 AKT_ROWS_LIMIT = 20  # botda ko'rsatiladigan qatorlar; to'lig'i PDF da
 
 
+def _product_line(p: dict) -> str:
+    """«• Авалон Кондиционер 32 — 10 × 450 USD = 4 500 USD».
+
+    1C narxni yubormasa (price = 0) qisqa ko'rinish qoladi: «• Товар × 10 — 4 500 USD».
+    """
+    cur = p.get("currency") or "UZS"
+    if p.get("price"):
+        return (f"  • {p['name']} — {p['qty']} × {fmt_amount(p['price'], cur)}"
+                f" = {fmt_amount(p['sum'], cur)}")
+    return f"  • {p['name']} × {p['qty']} — {fmt_amount(p['sum'], cur)}"
+
+
 def _totals_by_currency(rows: list[dict], key: str = "total") -> str:
     """Aralash valyutali hujjatlar yig'indisi: «46 800 USD · 1 200 000 сўм».
 
@@ -556,7 +568,7 @@ def create_router(
             lines.append(f"▪️ {s['warehouse']}")
         lines += ["", f"<b>{t(lang, 'products_header')}</b>"]
         for p in s["products"]:
-            lines.append(f"  • {p['name']} × {p['qty']} — {fmt_amount(p['sum'], p['currency'])}")
+            lines.append(_product_line(p))
         lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_amount(s['total'], s['currency'])}"]
         return "\n".join(lines)
 
@@ -626,7 +638,7 @@ def create_router(
             lines.append(f"▪️ <b>{t(lang, 'f_reason')}:</b> {r['reason']}")
         lines += ["", f"<b>{t(lang, 'products_header')}</b>"]
         for p in r["products"]:
-            lines.append(f"  • {p['name']} × {p['qty']} — {fmt_amount(p['sum'], p['currency'])}")
+            lines.append(_product_line(p))
         lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_amount(r['total'], r['currency'])}"]
         return "\n".join(lines)
 

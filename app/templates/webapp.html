@@ -382,7 +382,7 @@ function setHeader(company, id) {
 }
 const backBtn = (label, fn) => `<button class="btn sm line" style="margin-bottom:10px" onclick="${fn}">${I.chev}${label}</button>`;
 const tagOf = st => `<span class="tag ${st}">${ST()[st] || st}</span>`;
-const prodRows = ps => ps.map(p => `<div class="kv"><span>${esc(p.name)} <span style="color:var(--muted)">× ${p.qty}</span></span><span class="v">${amount(p.sum, p.currency)}</span></div>`).join('');
+const prodRows = ps => ps.map(p => `<div class="kv"><span>${esc(p.name)}${p.price ? `<br><small style="color:var(--muted)">${p.qty} × ${amount(p.price, p.currency)}</small>` : ` <span style="color:var(--muted)">× ${p.qty}</span>`}</span><span class="v">${amount(p.sum, p.currency)}</span></div>`).join('');
 
 async function setLang(l, save = true) {
   if (!T[l]) return;
