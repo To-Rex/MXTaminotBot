@@ -345,14 +345,15 @@ applyTheme(); Tg.onEvent('themeChanged', applyTheme);
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const sum = () => lng === 'ru' ? 'сум' : 'сўм';
-const money = n => `<span class="num">${Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ')}</span> ${sum()}`;
-const moneyT = n => Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ') + ' ' + sum();
+const nfUZS = n => Number(n || 0).toLocaleString('ru-RU', {maximumFractionDigits: 0}).replace(/\u00a0/g, ' ');
+const money = n => `<span class="num">${nfUZS(n)}</span> ${sum()}`;
+const moneyT = n => nfUZS(n) + ' ' + sum();
 const amount = (n, cur) => {
   const c = (cur || 'UZS').toUpperCase();
   const v = Number(n || 0);
-  if (c === 'UZS') return `<span class="num">${v.toLocaleString('ru-RU', {maximumFractionDigits: 0})}</span> ${sum()}`;
+  if (c === 'UZS') return `<span class="num">${nfUZS(v)}</span> ${sum()}`;
   const has = Math.abs(v - Math.trunc(v)) > 0.004;
-  return `<span class="num">${v.toLocaleString('ru-RU', {minimumFractionDigits: has ? 2 : 0, maximumFractionDigits: 2})}</span> ${c}`;
+  return `<span class="num">${v.toLocaleString('ru-RU', {minimumFractionDigits: has ? 2 : 0, maximumFractionDigits: 2}).replace(/\u00a0/g, ' ')}</span> ${c}`;
 };
 const moneyOr = n => (n === null || n === undefined) ? '<span style="color:var(--muted)">—</span>' : money(n);
 const note = (t, m) => `<div class="note ${t}">${m}</div>`;
@@ -586,10 +587,11 @@ async function loadBalance() {
   try {
     const d = await api('GET', '/balance');
     const neg = d.balance < 0;
+    const rows = (d.balances && d.balances.length) ? d.balances : [d];
     $('viewBalance').innerHTML = `<div class="stagger"><h2 class="t">${L('balance')}</h2>
       <div class="hero"><div class="eyebrow">${L('curBalance')}</div>
-        <div class="big num ${neg ? 'neg' : ''}">${money(d.balance)}</div>
-        ${noBal ? '' : `<span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span>`}</div>
+        ${rows.map(b => `<div class="big num ${b.balance < 0 ? 'neg' : ''}" style="font-size:25px;line-height:1.25;margin:2px 0">${b.balance < 0 ? '🔴' : '🟢'} ${amount(b.balance, b.currency)}</div>`).join('')}
+        <span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span></div>
       <div class="card"><div class="kv"><span class="k">${L('asOf')}</span><span class="v num">${esc(d.as_of)}</span></div></div>
       <div class="btns" style="margin-top:0"><button class="btn ghost" onclick="go('akt')">${I.akt} ${L('akt')}</button><button class="btn ghost" onclick="go('payments')">${I.payments} ${L('payments')}</button></div>
     </div>`;

@@ -196,18 +196,30 @@ GET /hs/supplier_bot/api/getBalance?supplier_id=70123
 |---|---|---|---|
 | `supplier_id` | id | ha | |
 
-### Javob 200
+### Javob 200 — **har bir valyuta uchun alohida qator** (ro'yxat)
 ```json
-{ "balance": 12500000, "currency": "UZS", "as_of": "2026-08-20T12:00:00" }
+[
+  { "balance": 19745664.6, "currency": "UZS", "as_of": "2026-08-27T13:38:35" },
+  { "balance": -45539.92,  "currency": "USD", "as_of": "2026-08-27T13:38:35" }
+]
 ```
 
 | Kalit | Tip | Izoh |
 |---|---|---|
-| `balance` | money | **musbat** — kompaniya taminotchiga qarzdor; **manfiy** — taminotchi kompaniyaga qarzdor. Bot belgiga qarab 🟢/🔴 va izoh ko'rsatadi |
-| `currency` | string | hozircha doim `UZS` |
+| `balance` | money | **musbat** — kompaniya taminotchiga qarzdor; **manfiy** — taminotchi kompaniyaga qarzdor. Bot har bir valyuta uchun 🟢/🔴 ko'rsatadi |
+| `currency` | string | valyuta kodi: `UZS`, `USD`, `EUR`… (katta harflarda) |
 | `as_of` | datetime | qoldiq hisoblangan vaqt — «Ҳолат санаси» |
 
-> Tekshiruv: `balance` = joriy sanagacha bo'lgan akt sverkaning `closing_balance` i bilan mos bo'lishi kerak (7-bo'lim).
+**Bot qanday ko'rsatadi:** barcha valyutalar ro'yxat bo'lib chiqadi; **asosiy** valyuta — `UZS`
+(bo'lmasa ro'yxatdagi birinchisi) va u birinchi turadi. Kabinetdagi qisqa qatorda ham
+hammasi ko'rinadi: `19 745 665 сўм · -45 539,92 USD`.
+`UZS` butun songacha yaxlitlanadi, boshqa valyutalarda tiyin/sent ko'rsatiladi.
+
+> Eski shakl — bitta obyekt `{ "balance": …, "currency": …, "as_of": … }` — ham qabul qilinadi
+> (bot uni bitta elementli ro'yxat deb hisoblaydi), shuning uchun o'tish bosqichida ikkalasi ham ishlaydi.
+> Bo'sh ro'yxat `[]` esa xato deb qabul qilinadi — hech bo'lmasa bitta valyuta qatori qaytsin.
+
+> Tekshiruv: `UZS` qatoridagi `balance` = joriy sanagacha bo'lgan akt sverkaning `closing_balance` i bilan mos bo'lishi kerak (8-bo'lim).
 
 ---
 
