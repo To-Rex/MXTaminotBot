@@ -347,6 +347,13 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const sum = () => lng === 'ru' ? 'сум' : 'сўм';
 const money = n => `<span class="num">${Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ')}</span> ${sum()}`;
 const moneyT = n => Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ') + ' ' + sum();
+const amount = (n, cur) => {
+  const c = (cur || 'UZS').toUpperCase();
+  const v = Number(n || 0);
+  if (c === 'UZS') return `<span class="num">${v.toLocaleString('ru-RU', {maximumFractionDigits: 0})}</span> ${sum()}`;
+  const has = Math.abs(v - Math.trunc(v)) > 0.004;
+  return `<span class="num">${v.toLocaleString('ru-RU', {minimumFractionDigits: has ? 2 : 0, maximumFractionDigits: 2})}</span> ${c}`;
+};
 const moneyOr = n => (n === null || n === undefined) ? '<span style="color:var(--muted)">—</span>' : money(n);
 const note = (t, m) => `<div class="note ${t}">${m}</div>`;
 const skeleton = (n = 3) => Array.from({ length: n }, () => `<div class="sk-card"><div class="sk sk-line" style="width:45%"></div><div class="sk sk-line" style="width:80%"></div><div class="sk sk-line" style="width:60%;margin:0"></div></div>`).join('');
@@ -455,7 +462,8 @@ async function loadCabinet() {
       ${(c.unavailable && c.unavailable.length) ? note('warn', `<span>⚠️</span><span>${L('partial')}: ${c.unavailable.map(k => L(k) || k).join(', ')}</span>`) : ''}
       <div class="hero">
         <div class="eyebrow">${L('curBalance')}</div>
-        <div class="big num ${neg ? 'neg' : ''}">${moneyOr(c.balance)}</div>
+        <div class="big num ${neg ? 'neg' : ''}">${c.balance === null || c.balance === undefined ? '—' : amount(c.balance, c.balance_currency)}</div>
+        ${(c.balances && c.balances.length > 1) ? `<div style="margin:-2px 0 8px">${c.balances.slice(1).map(b => `<span class="tag ${b.balance < 0 ? 'cancelled' : 'confirmed'}" style="margin-right:6px">${amount(b.balance, b.currency)}</span>`).join('')}</div>` : ''}
         ${noBal ? '' : `<span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span>`}
       </div>
       <div class="grid2">

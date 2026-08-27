@@ -200,6 +200,8 @@ async def get_cabinet(auth: dict = Depends(authenticate_webapp_user)):
     return _ser({
         **cab,
         "balance": bal["balance"] if bal else None,
+        "balance_currency": bal["currency"] if bal else None,
+        "balances": bal.get("balances") if bal else None,
         "balance_as_of": bal["as_of"] if bal else None,
         "bonus_remaining": bon["remaining"] if bon else None,
         "shipments_count": len(shipments) if shipments is not None else None,

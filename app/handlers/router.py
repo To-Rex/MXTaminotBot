@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 SESSION_TTL_HOURS = 24 * 30  # brauzer sessiyasi (/getsession) — 30 kun
 
 fmt_money = SupplierService.fmt_money
+fmt_amount = SupplierService.fmt_amount
 fmt_date = SupplierService.fmt_date
 
 STATUS_ICON = {"pending": "⏳", "confirmed": "✅", "cancelled": "❌"}
@@ -403,7 +404,8 @@ def create_router(
              if confirmed_paid is not None else f"💰 {t(lang, 'cab_payments')}: {NA}"),
             (f"🎁 {t(lang, 'bonus_remaining')}: {fmt_money(bon['remaining'])}"
              if bon else f"🎁 {t(lang, 'bonus_remaining')}: {NA}"),
-            (f"{'🟢' if bal['balance'] >= 0 else '🔴'} {t(lang, 'balance_current')}: <b>{fmt_money(bal['balance'])}</b>"
+            (f"{'🟢' if bal['balance'] >= 0 else '🔴'} {t(lang, 'balance_current')}: "
+             f"<b>{' · '.join(fmt_amount(r['balance'], r['currency']) for r in (bal.get('balances') or [bal]))}</b>"
              if bal else f"⚪️ {t(lang, 'balance_current')}: {NA}"),
         ]
         if pending:
@@ -711,15 +713,13 @@ def create_router(
         if not supplier_id:
             return
         b = await svc.get_balance(*creds, supplier_id)
-        icon = "🟢" if b["balance"] >= 0 else "🔴"
+        rows = b.get("balances") or [b]
+        lines = [t(lang, "balance_title"), "", f"<b>{t(lang, 'balance_current')}:</b>"]
+        for r in rows:  # har bir valyuta alohida qatorda
+            icon = "🟢" if r["balance"] >= 0 else "🔴"
+            lines.append(f"{icon} <b>{fmt_amount(r['balance'], r['currency'])}</b>")
         hint = t(lang, "balance_we_owe") if b["balance"] >= 0 else t(lang, "balance_you_owe")
-        lines = [
-            t(lang, "balance_title"), "",
-            f"{icon} <b>{t(lang, 'balance_current')}:</b> {fmt_money(b['balance'])}",
-            "",
-            hint,
-            f"🕘 {t(lang, 'balance_as_of')}: {b['as_of'].strftime('%d.%m.%Y %H:%M')}",
-        ]
+        lines += ["", hint, f"🕘 {t(lang, 'balance_as_of')}: {b['as_of'].strftime('%d.%m.%Y %H:%M')}"]
         await message.answer("\n".join(lines))
 
     # ════════════════════════════════════════════════════════════════════

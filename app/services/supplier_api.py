@@ -41,7 +41,10 @@ EXPECTED_SHAPES: dict[str, Any] = {
         "client_id": 70123, "name": 'MCHJ "Taminot Trade"', "phone": "998901234567",
         "status": "Фаол таъминотчи", "registered_at": "2025-03-14",
     },
-    "getBalance": {"balance": 12500000, "currency": "UZS", "as_of": "2026-08-20T12:00:00"},
+    "getBalance": [
+        {"balance": 12500000, "currency": "UZS", "as_of": "2026-08-20T12:00:00"},
+        {"balance": -45539.92, "currency": "USD", "as_of": "2026-08-20T12:00:00"},
+    ],
     "getPaymentsSupplier": [{
         "payment_id": 90101, "doc_number": "TL-260812-101", "date": "2026-08-12",
         "amount": 5400000, "method": "transfer", "status": "pending",
@@ -106,8 +109,26 @@ def _today() -> date:
     return datetime.now(timezone.utc).date()
 
 
+CURRENCY_SUFFIX = {"UZS": "сўм", "": "сўм"}
+
+
 def _fmt_money(v: float) -> str:
+    """So'm (asosiy valyuta) — butun songacha yaxlitlanadi."""
     return f"{float(v or 0):,.0f}".replace(",", " ") + " сўм"
+
+
+def _fmt_amount(v: float, currency: str = "UZS") -> str:
+    """Ixtiyoriy valyuta: UZS → «19 745 665 сўм», boshqasi → «-45 539,92 USD».
+
+    Tiyin/sent bor bo'lsa ikki xona ko'rsatiladi (валюта ҳисоблари учун муҳим).
+    """
+    cur = (currency or "UZS").upper()
+    val = float(v or 0)
+    if cur in ("UZS", ""):
+        return _fmt_money(val)
+    has_cents = abs(val - int(val)) > 0.004
+    text = f"{val:,.2f}" if has_cents else f"{val:,.0f}"
+    return text.replace(",", "\u00a0").replace(".", ",").replace("\u00a0", " ") + f" {cur}"
 
 
 def _fmt_date(d: Any) -> str:
@@ -455,6 +476,7 @@ def _raise_if_login_unavailable(endpoint: str = "checkNumber") -> None:
 # ────────────────────────────────────────────────────────────────────────────
 class SupplierService:
     fmt_money = staticmethod(_fmt_money)
+    fmt_amount = staticmethod(_fmt_amount)
     fmt_date = staticmethod(_fmt_date)
 
     # ── 1. registration — login MX-Client-Bot bilan BIR XIL ────────────
@@ -497,13 +519,38 @@ class SupplierService:
     # ── balans (TZ 2.5) ─────────────────────────────────────────────────
     @staticmethod
     async def get_balance(base_url: str, login: str, password: str, supplier_id: str) -> dict:
+        """Balans — 1C har bir valyuta uchun alohida qator qaytaradi.
+
+        Yangi shakl:  ``[{"balance": -45539.92, "currency": "USD", …}, {"balance": …, "currency": "UZS", …}]``
+        Eski shakl (bitta obyekt) ham qabul qilinadi.
+
+        Qaytadi: ``{"balances": [...], "balance": <asosiy>, "currency": …, "as_of": …}`` —
+        ``balance``/``currency`` asosiy valyuta (UZS bo'lsa u, bo'lmasa birinchisi),
+        shu sababli eski kod ham ishlayveradi.
+        """
         data = await _get(base_url, login, password, "getBalance", supplier_id=supplier_id)
-        d = _expect_dict("getBalance", data, ("balance",))
-        return {
-            "balance": _to_float(d.get("balance")),
-            "currency": str(d.get("currency") or "UZS"),
-            "as_of": _parse_dt(d.get("as_of")) or datetime.now(),
-        }
+        rows = data if isinstance(data, list) else [data]
+        out = []
+        for d in rows:
+            if not isinstance(d, dict) or "balance" not in d:
+                continue
+            out.append({
+                "balance": _to_float(d.get("balance")),
+                "currency": (str(d.get("currency") or "UZS")).upper(),
+                "as_of": _parse_dt(d.get("as_of")) or datetime.now(),
+            })
+        if not out:
+            api_log.amend_last(
+                "getBalance", "unavailable",
+                "javob shakli noto'g'ri — kutilgan: [{balance, currency, as_of}, …]; "
+                f"kelgan: {_shape_of(data)}",
+                expected=EXPECTED_SHAPES.get("getBalance"),
+            )
+            raise ServiceUnavailable("getBalance", "unexpected shape (no balance)")
+        primary = next((b for b in out if b["currency"] == "UZS"), out[0])
+        # asosiy valyuta birinchi turadi, qolganlari alifbo bo'yicha
+        out.sort(key=lambda b: (b["currency"] != primary["currency"], b["currency"]))
+        return {"balances": out, **primary}
 
     # ── to'lovlar (TZ 2.1) ──────────────────────────────────────────────
     @staticmethod
