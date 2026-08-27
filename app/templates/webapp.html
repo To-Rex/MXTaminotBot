@@ -218,12 +218,12 @@ const initData = Tg.initData || '';
 
 let user = null, page = 'cabinet';
 let lng = localStorage.getItem('mx_lang') || 'uz';
-let akt = { from: null, to: null, preset: 'm' };
+let akt = { from: null, to: null, preset: 'm', cryId: null, cry: '', currencies: null };
 
 /* ── i18n (uz kirill / ru) ─────────────────────────────────────────── */
 const T = {
 uz: {
-  sub: 'Таъминотчи кабинети', partial: 'Ҳозир олинмаган бўлимлар', cabinet: 'Кабинет', payments: 'Тўловлар', shipments: 'Юклар',
+  sub: 'Таъминотчи кабинети', partial: 'Ҳозир олинмаган бўлимлар', currency: 'Валюта', cabinet: 'Кабинет', payments: 'Тўловлар', shipments: 'Юклар',
   shipmentsFull: 'Берилган юклар', returns: 'Юк қайтариш', bonuses: 'Бонуслар', balance: 'Баланс',
   akt: 'Акт сверка', more: 'Кўпроқ', out: 'Чиқиш', lang: 'Тил',
   hello: 'Салом', profile: 'Таъминотчи маълумотлари', name: 'Номи', phone: 'Телефон',
@@ -255,7 +255,7 @@ uz: {
   noAccessB: 'Кириш имкони йўқ', noAccessS: '. Ботда /getsession буйруғи орқали янги ҳавола олинг ёки иловани Telegram ичидан очинг.',
 },
 ru: {
-  sub: 'Кабинет поставщика', partial: 'Разделы недоступны', cabinet: 'Кабинет', payments: 'Платежи', shipments: 'Отгрузки',
+  sub: 'Кабинет поставщика', partial: 'Разделы недоступны', currency: 'Валюта', cabinet: 'Кабинет', payments: 'Платежи', shipments: 'Отгрузки',
   shipmentsFull: 'Отгруженные товары', returns: 'Возвраты', bonuses: 'Бонусы', balance: 'Баланс',
   akt: 'Акт сверки', more: 'Ещё', out: 'Выход', lang: 'Язык',
   hello: 'Здравствуйте', profile: 'Данные поставщика', name: 'Наименование', phone: 'Телефон',
@@ -621,16 +621,32 @@ function setAkt(preset) {
   akt.from = f; akt.to = to;
   renderAkt();
 }
+const CUR_ICON = { UZS: '🇺🇿', USD: '💵', EUR: '💶', RUB: '🇷🇺' };
+function aktCurChips() {
+  if (!akt.currencies || akt.currencies.length < 2) return '';
+  return `<div class="chips">${akt.currencies.map(c =>
+    `<button class="chip ${akt.cryId === c.id ? 'active' : ''}" onclick="setAktCur(${c.id}, '${c.name}')">${CUR_ICON[c.name] || '💱'} ${c.name}</button>`).join('')}</div>`;
+}
+function setAktCur(id, name) {
+  akt.cryId = id; akt.cry = name; haptic('tap');
+  if (akt.preset === 'custom') renderAktCustom(); else renderAkt();
+}
 function aktChips() {
   const C = [['m', L('thisM')], ['pm', L('prevM')], ['m3', L('m3')], ['y', L('year')], ['custom', '✏️ ' + L('custom')]];
   return `<div class="chips">${C.map(([k, l]) => `<button class="chip ${akt.preset === k ? 'active' : ''}" onclick="setAkt('${k}')">${l}</button>`).join('')}</div>`;
 }
-function loadAkt() {
+async function loadAkt() {
   if (!akt.from) { const [f, t2] = aktPresets().m; akt.from = f; akt.to = t2; akt.preset = 'm'; }
+  if (akt.currencies === null) {          // valyutalar bir marta yuklanadi
+    load('viewAkt');
+    try { akt.currencies = (await api('GET', '/currencies')).currencies || []; }
+    catch (e) { akt.currencies = []; }
+    if (akt.currencies.length && !akt.cryId) { akt.cryId = akt.currencies[0].id; akt.cry = akt.currencies[0].name; }
+  }
   if (akt.preset === 'custom') renderAktCustom(); else renderAkt();
 }
 function renderAktCustom() {
-  $('viewAkt').innerHTML = `<h2 class="t">${L('akt')}</h2>${aktChips()}
+  $('viewAkt').innerHTML = `<h2 class="t">${L('akt')}</h2>${aktCurChips()}${aktChips()}
     <div class="card">
       <div class="field"><label>${L('from')}</label><input class="input num" type="date" id="aktFrom" value="${akt.from || ''}"></div>
       <div class="field"><label>${L('to')}</label><input class="input num" type="date" id="aktTo" value="${akt.to || ''}"></div>
@@ -646,22 +662,25 @@ function aktCustomShow() {
 async function renderAkt() {
   load('viewAkt');
   try {
-    const d = await api('GET', `/akt-sverka?date_from=${akt.from}&date_to=${akt.to}`);
-    const pdfPath = `/akt-sverka/pdf?date_from=${d.date_from_iso}&date_to=${d.date_to_iso}&lang=${lng}`;
-    $('viewAkt').innerHTML = `<h2 class="t">${L('akt')}</h2>${aktChips()}
+    const cq = akt.cryId ? `&cry_id=${akt.cryId}&cry=${encodeURIComponent(akt.cry)}` : '';
+    const d = await api('GET', `/akt-sverka?date_from=${akt.from}&date_to=${akt.to}${cq}`);
+    const cur = d.currency || 'UZS';
+    const pdfPath = `/akt-sverka/pdf?date_from=${d.date_from_iso}&date_to=${d.date_to_iso}&lang=${lng}${cq}`;
+    $('viewAkt').innerHTML = `<h2 class="t">${L('akt')}</h2>${aktCurChips()}${aktChips()}
       <div class="stagger">
       <div class="card"><div class="kv" style="padding-top:0"><span class="k">${L('period')}</span><span class="v num">${d.date_from} — ${d.date_to}</span></div>
-        <div class="kv"><span class="k">${L('opening')}</span><span class="v">${money(d.opening_balance)}</span></div>
-        <div class="kv"><span class="k">➕ ${L('debit')}</span><span class="v" style="color:var(--paid)">${money(d.total_debit)}</span></div>
-        <div class="kv"><span class="k">➖ ${L('credit')}</span><span class="v" style="color:var(--late)">${money(d.total_credit)}</span></div>
-        <div class="kv" style="padding-bottom:0"><span class="k"><b>${L('closing')}</b></span><span class="v" style="font-size:16px">${money(d.closing_balance)}</span></div>
+        ${d.cry_id ? `<div class="kv"><span class="k">${L('currency')}</span><span class="v">${esc(cur)}</span></div>` : ''}
+        <div class="kv"><span class="k">${L('opening')}</span><span class="v">${amount(d.opening_balance, cur)}</span></div>
+        <div class="kv"><span class="k">➕ ${L('debit')}</span><span class="v" style="color:var(--paid)">${amount(d.total_debit, cur)}</span></div>
+        <div class="kv"><span class="k">➖ ${L('credit')}</span><span class="v" style="color:var(--late)">${amount(d.total_credit, cur)}</span></div>
+        <div class="kv" style="padding-bottom:0"><span class="k"><b>${L('closing')}</b></span><span class="v" style="font-size:16px">${amount(d.closing_balance, cur)}</span></div>
       </div>
       ${d.rows.length ? `<div class="card"><div class="eyebrow" style="margin-bottom:8px">${L('moves')} · ${d.rows.length}</div><div class="tl">
         ${d.rows.map(r => `<div class="it ${r.debit ? 'plus' : 'minus'}"><span class="dot"></span>
           <div class="d"><b class="num">${r.date} · ${esc(r.doc)}</b><small>${esc(r.note)}</small></div>
-          <span class="a">${r.debit ? '+' + moneyT(r.debit) : '−' + moneyT(r.credit)}</span></div>`).join('')}
+          <span class="a">${r.debit ? '+' : '−'}${amount(r.debit || r.credit, cur)}</span></div>`).join('')}
       </div></div>` : note('info', L('emptyAkt'))}
-      <button class="btn primary" id="pdfBtn" onclick="downloadPdf('${pdfPath}', '${d.date_from_iso}_${d.date_to_iso}')">${L('pdf')}</button>
+      <button class="btn primary" id="pdfBtn" onclick="downloadPdf('${pdfPath}', '${(d.currency && d.cry_id) ? d.currency + '_' : ''}${d.date_from_iso}_${d.date_to_iso}')">${L('pdf')}</button>
       </div>`;
   } catch (e) { $('viewAkt').innerHTML = `<h2 class="t">${L('akt')}</h2>${aktChips()}` + errBox(e, 'renderAkt()'); }
 }

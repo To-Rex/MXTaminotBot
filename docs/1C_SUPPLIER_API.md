@@ -495,13 +495,41 @@ GET /hs/supplier_bot/api/getBonuses?supplier_id=70123
 
 ---
 
-## 8. Akt sverka — `GET getAktSverka` (TZ 2.6)
+## 8. Valyutalar ro'yxati — `GET getcry`
+
+«📄 Акт сверка» bosilganda bot **avval valyutani so'raydi** — ro'yxat shu endpointdan olinadi.
+
+### So'rov
+```http
+GET /hs/supplier_bot/api/getcry
+```
+Parametrsiz.
+
+### Javob 200
+```json
+[
+  { "id": 1, "name": "USD" },
+  { "id": 2, "name": "UZS" }
+]
+```
+
+| Kalit | Tip | Izoh |
+|---|---|---|
+| `id` | id | valyuta kodi — `getAktSverka` ga `cry_id` sifatida yuboriladi |
+| `name` | string | valyuta nomi: `UZS`, `USD`, `EUR`… (katta harflarda) |
+
+Bot `UZS` ni ro'yxat boshiga qo'yadi. Valyuta bitta bo'lsa — tanlash o'tkazib yuboriladi.
+Endpoint tayyor bo'lmasa bot valyuta tanlashsiz davom etadi (`cry_id` yuborilmaydi).
+
+---
+
+## 9. Akt sverka — `GET getAktSverka` (TZ 2.6)
 
 «📄 Акт сверка» — tanlangan davr bo'yicha o'zaro hisob-kitob. Bot ma'lumotni ekranda ko'rsatadi va **PDF ni o'zi yasaydi** (`app/services/pdf.py`) — 1C dan faqat shu JSON kerak.
 
 ### So'rov
 ```http
-GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&date_to=2026-08-31
+GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&date_to=2026-08-31&cry_id=1
 ```
 
 | Parametr | Tip | Majburiy | Izoh |
@@ -509,6 +537,7 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 | `supplier_id` | id | ha | |
 | `date_from` | date | ha | davr boshi (shu kun kiradi) |
 | `date_to` | date | ha | davr oxiri (shu kun kiradi) |
+| **`cry_id`** | id | yo'q | foydalanuvchi tanlagan valyuta (`getcry` dagi `id`). Berilmasa 1C o'z standart valyutasida qaytaradi. **Barcha summalar shu valyutada bo'lishi kerak** |
 
 ### Javob 200
 ```json
@@ -544,11 +573,11 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 | `rows[].debit` | money | debet (yuk berilishi); bo'lmasa `0` |
 | `rows[].credit` | money | kredit (to'lov/qaytarish); bo'lmasa `0` |
 
-> Tekshiruvlar: `closing_balance = opening_balance + total_debit − total_credit`; joriy sanagacha akt `closing_balance` = `getBalance.balance`; har bir qatorda `debit` va `credit` dan faqat bittasi > 0.
+> Tekshiruvlar: `closing_balance = opening_balance + total_debit − total_credit`; joriy sanagacha akt `closing_balance` (shu valyutada) = `getBalance` dagi o'sha valyuta qatori; har bir qatorda `debit` va `credit` dan faqat bittasi > 0.
 
 ---
 
-## 9. Endpoint ↔ bot mosligi
+## 10. Endpoint ↔ bot mosligi
 
 | 1C endpoint | Prefiks | `SupplierService` metodi | Bot bo'limi |
 |---|---|---|---|
@@ -561,7 +590,8 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 | `getReturns` | `supplier_bot` | `get_returns` / `get_return` | 🔄 Юк қайтариш (ro'yxat, detallar, holat) |
 | `confirmReturn` | `supplier_bot` | `confirm_return` | 🔄 Қайтаришни тасдиқлаш |
 | `getBonuses` | `supplier_bot` | `get_bonuses` | 🎁 Бонуслар, 👤 Кабинет |
-| `getAktSverka` | `supplier_bot` | `get_akt_sverka` | 📄 Акт сверка (+ PDF) |
+| `getcry` | `supplier_bot` | `get_currencies` | 📄 Акт сверка — валюта танлаш |
+| `getAktSverka` | `supplier_bot` | `get_akt_sverka` | 📄 Акт сверка (+ PDF), танланган валютада |
 
 > **Bitta hujjat uchun alohida endpoint kerak emas:** hujjat tafsiloti (to'lov / yuk / qaytarish detallari) ro'yxat javobidan olinadi — bot `getPaymentsSupplier` / `getShipments` / `getReturns` natijasidan kerakli `*_id` ni o'zi filtrlaydi. Shuning uchun ro'yxat javobida **barcha** maydonlar (jumladan `products[]`) to'liq bo'lishi kerak.
 >
@@ -569,7 +599,7 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 
 ---
 
-## 10. 1C jamoasi uchun tekshiruv ro'yxati
+## 11. 1C jamoasi uchun tekshiruv ro'yxati
 
 - [ ] Yangi endpointlar `hs/supplier_bot/api/` ostida, Basic Auth bilan; noto'g'ri parol → `401`
 - [ ] Javoblar UTF-8 JSON; sanalar `YYYY-MM-DD`; summalar **son** (string emas); bo'sh ro'yxat `[]`
@@ -580,6 +610,7 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 - [ ] `getBalance.balance` = joriy sanagacha `getAktSverka.closing_balance`
 - [ ] `getAktSverka`: `closing = opening + total_debit − total_credit`; `rows` sana bo'yicha o'sish tartibida; qatorda `debit`/`credit` dan faqat bittasi > 0
 - [ ] `getBonuses`: `remaining = accrued − used`
+- [ ] `getcry` valyutalar ro'yxatini qaytaradi; `getAktSverka` `cry_id` ni hisobga oladi va summalarni shu valyutada beradi
 - [ ] `getShipments` / `getReturns` da har bir tovar uchun `name`, `qty`, `price`, `sum` to'ldirilgan (TZ 2.2)
 - [ ] Enum qiymatlar aynan hujjatdagidek (kichik harf, lotin)
 - [ ] Test: `/panel/api-logs` da har bir endpoint javobi kutilgan shakl bilan solishtiriladi
