@@ -19,7 +19,7 @@ from app.database import async_session
 from app.i18n import SUPPORTED_LANGS
 from app.models import User, WebSession
 from app.services.pdf import build_akt_pdf
-from app.services.supplier_api import SupplierService
+from app.services.supplier_api import ServiceUnavailable, SupplierError, SupplierService
 from app.web.web_app_auth import authenticate_webapp_user
 
 logger = logging.getLogger(__name__)
@@ -176,22 +176,39 @@ async def get_cabinet(auth: dict = Depends(authenticate_webapp_user)):
     if not user or not user.client_id:
         raise HTTPException(status_code=400, detail="Аввал рўйхатдан ўтинг")
     supplier_id, lang, phone = user.client_id, _lang(user), user.phone_number or ""
+    # Profil — asosiy manba (u olinmasa 503). Qolganlari yordamchi: bittasi
+    # ishlamasa ham kabinet ochiladi, o'sha qiymat null bo'lib, "unavailable"
+    # ro'yxatida qaysi bo'lim olinmagani qaytadi.
     cab = await svc.get_cabinet(*_creds(auth), supplier_id, phone=phone)
-    bal = await svc.get_balance(*_creds(auth), supplier_id)
-    bon = await svc.get_bonuses(*_creds(auth), supplier_id)
-    shipments = await svc.get_shipments(*_creds(auth), supplier_id)
-    payments = await svc.get_payments(*_creds(auth), supplier_id)
-    returns = await svc.get_returns(*_creds(auth), supplier_id)
+
+    unavailable: list[str] = []
+
+    async def _part(coro, name: str):
+        try:
+            return await coro
+        except (ServiceUnavailable, SupplierError) as e:
+            logger.warning("webapp cabinet: %s olinmadi (%s)", name, e)
+            unavailable.append(name)
+            return None
+
+    bal = await _part(svc.get_balance(*_creds(auth), supplier_id), "balance")
+    bon = await _part(svc.get_bonuses(*_creds(auth), supplier_id), "bonuses")
+    shipments = await _part(svc.get_shipments(*_creds(auth), supplier_id), "shipments")
+    payments = await _part(svc.get_payments(*_creds(auth), supplier_id), "payments")
+    returns = await _part(svc.get_returns(*_creds(auth), supplier_id), "returns")
+
     return _ser({
         **cab,
-        "balance": bal["balance"],
-        "balance_as_of": bal["as_of"],
-        "bonus_remaining": bon["remaining"],
-        "shipments_count": len(shipments),
-        "shipments_total": sum(s["total"] for s in shipments),
-        "payments_confirmed_total": sum(p["amount"] for p in payments if p["status"] == "confirmed"),
-        "pending_payments": sum(1 for p in payments if p["status"] == "pending"),
-        "pending_returns": sum(1 for r in returns if r["status"] == "pending"),
+        "balance": bal["balance"] if bal else None,
+        "balance_as_of": bal["as_of"] if bal else None,
+        "bonus_remaining": bon["remaining"] if bon else None,
+        "shipments_count": len(shipments) if shipments is not None else None,
+        "shipments_total": sum(s["total"] for s in shipments) if shipments is not None else None,
+        "payments_confirmed_total": (sum(p["amount"] for p in payments if p["status"] == "confirmed")
+                                     if payments is not None else None),
+        "pending_payments": sum(1 for p in payments if p["status"] == "pending") if payments else 0,
+        "pending_returns": sum(1 for r in returns if r["status"] == "pending") if returns else 0,
+        "unavailable": unavailable,
     })
 
 

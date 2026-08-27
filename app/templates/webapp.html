@@ -223,7 +223,7 @@ let akt = { from: null, to: null, preset: 'm' };
 /* ── i18n (uz kirill / ru) ─────────────────────────────────────────── */
 const T = {
 uz: {
-  sub: 'Таъминотчи кабинети', cabinet: 'Кабинет', payments: 'Тўловлар', shipments: 'Юклар',
+  sub: 'Таъминотчи кабинети', partial: 'Ҳозир олинмаган бўлимлар', cabinet: 'Кабинет', payments: 'Тўловлар', shipments: 'Юклар',
   shipmentsFull: 'Берилган юклар', returns: 'Юк қайтариш', bonuses: 'Бонуслар', balance: 'Баланс',
   akt: 'Акт сверка', more: 'Кўпроқ', out: 'Чиқиш', lang: 'Тил',
   hello: 'Салом', profile: 'Таъминотчи маълумотлари', name: 'Номи', phone: 'Телефон',
@@ -255,7 +255,7 @@ uz: {
   noAccessB: 'Кириш имкони йўқ', noAccessS: '. Ботда /getsession буйруғи орқали янги ҳавола олинг ёки иловани Telegram ичидан очинг.',
 },
 ru: {
-  sub: 'Кабинет поставщика', cabinet: 'Кабинет', payments: 'Платежи', shipments: 'Отгрузки',
+  sub: 'Кабинет поставщика', partial: 'Разделы недоступны', cabinet: 'Кабинет', payments: 'Платежи', shipments: 'Отгрузки',
   shipmentsFull: 'Отгруженные товары', returns: 'Возвраты', bonuses: 'Бонусы', balance: 'Баланс',
   akt: 'Акт сверки', more: 'Ещё', out: 'Выход', lang: 'Язык',
   hello: 'Здравствуйте', profile: 'Данные поставщика', name: 'Наименование', phone: 'Телефон',
@@ -347,6 +347,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const sum = () => lng === 'ru' ? 'сум' : 'сўм';
 const money = n => `<span class="num">${Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ')}</span> ${sum()}`;
 const moneyT = n => Number(n || 0).toLocaleString('ru-RU').replace(/,/g, ' ') + ' ' + sum();
+const moneyOr = n => (n === null || n === undefined) ? '<span style="color:var(--muted)">—</span>' : money(n);
 const note = (t, m) => `<div class="note ${t}">${m}</div>`;
 const skeleton = (n = 3) => Array.from({ length: n }, () => `<div class="sk-card"><div class="sk sk-line" style="width:45%"></div><div class="sk sk-line" style="width:80%"></div><div class="sk sk-line" style="width:60%;margin:0"></div></div>`).join('');
 const load = id => { $(id).innerHTML = skeleton(); };
@@ -443,22 +444,24 @@ async function loadCabinet() {
   load('viewCabinet');
   try {
     const c = await api('GET', '/cabinet');
-    const neg = Number(String(c.balance).replace(/\s/g, '')) < 0 || c.balance < 0;
+    const noBal = c.balance === null || c.balance === undefined;
+    const neg = !noBal && (Number(String(c.balance).replace(/\s/g, '')) < 0 || c.balance < 0);
     const pending = (c.pending_payments || 0) + (c.pending_returns || 0);
     $('viewCabinet').innerHTML = `<div class="stagger">
       <div style="display:flex;justify-content:space-between;align-items:flex-end;margin:2px 2px 12px">
         <div><div class="eyebrow">${L('hello')}</div><h2 class="t" style="margin:2px 0 0">${L('cabinet')}</h2></div>
         <span class="tag active">${esc(c.status || '')}</span>
       </div>
+      ${(c.unavailable && c.unavailable.length) ? note('warn', `<span>⚠️</span><span>${L('partial')}: ${c.unavailable.map(k => L(k) || k).join(', ')}</span>`) : ''}
       <div class="hero">
         <div class="eyebrow">${L('curBalance')}</div>
-        <div class="big num ${neg ? 'neg' : ''}">${money(c.balance)}</div>
-        <span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span>
+        <div class="big num ${neg ? 'neg' : ''}">${moneyOr(c.balance)}</div>
+        ${noBal ? '' : `<span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span>`}
       </div>
       <div class="grid2">
-        <div class="tile"><div class="l">${L('shippedTotal')}</div><div class="n">${money(c.shipments_total)}</div><div class="l" style="margin-top:2px">${c.shipments_count} ${L('docs')}</div></div>
-        <div class="tile paid"><div class="l">${L('paidTotal')}</div><div class="n">${money(c.payments_confirmed_total)}</div></div>
-        <div class="tile"><div class="l">${L('bonusLeft')}</div><div class="n">${money(c.bonus_remaining)}</div></div>
+        <div class="tile"><div class="l">${L('shippedTotal')}</div><div class="n">${moneyOr(c.shipments_total)}</div><div class="l" style="margin-top:2px">${c.shipments_count ?? '—'} ${L('docs')}</div></div>
+        <div class="tile paid"><div class="l">${L('paidTotal')}</div><div class="n">${moneyOr(c.payments_confirmed_total)}</div></div>
+        <div class="tile"><div class="l">${L('bonusLeft')}</div><div class="n">${moneyOr(c.bonus_remaining)}</div></div>
         <div class="tile ${pending ? 'late' : ''}"><div class="l">${L('pendingN')}</div><div class="n num">${pending}</div></div>
       </div>
       ${pending ? `<div class="btns" style="margin:0 0 12px">${c.pending_payments ? `<button class="btn primary" onclick="go('payments')">${I.payments} ${L('payments')}</button>` : ''}${c.pending_returns ? `<button class="btn ghost" onclick="go('returns')">${I.returns} ${L('returns')}</button>` : ''}</div>` : ''}
@@ -468,7 +471,7 @@ async function loadCabinet() {
         <div class="kv"><span class="k">${L('phone')}</span><span class="v num">${c.phone ? '+' + esc(c.phone) : '—'}</span></div>
         <div class="kv"><span class="k">${L('supplierId')}</span><span class="v num">${esc(c.supplier_id)}</span></div>
         <div class="kv"><span class="k">${L('regAt')}</span><span class="v num">${esc(c.registered_at || '—')}</span></div>
-        <div class="kv"><span class="k">${L('asOf')}</span><span class="v num">${esc(c.balance_as_of || '')}</span></div>
+        <div class="kv"><span class="k">${L('asOf')}</span><span class="v num">${esc(c.balance_as_of || '—')}</span></div>
       </div>
       <div class="card"><h3 class="t">${L('langTitle')}</h3>${langChips()}</div>
       <button class="btn danger" onclick="doLogout()">${L('out')}</button>
@@ -578,7 +581,7 @@ async function loadBalance() {
     $('viewBalance').innerHTML = `<div class="stagger"><h2 class="t">${L('balance')}</h2>
       <div class="hero"><div class="eyebrow">${L('curBalance')}</div>
         <div class="big num ${neg ? 'neg' : ''}">${money(d.balance)}</div>
-        <span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span></div>
+        ${noBal ? '' : `<span class="next ${neg ? 'late' : 'ok'}">${neg ? L('youOwe') : L('weOwe')}</span>`}</div>
       <div class="card"><div class="kv"><span class="k">${L('asOf')}</span><span class="v num">${esc(d.as_of)}</span></div></div>
       <div class="btns" style="margin-top:0"><button class="btn ghost" onclick="go('akt')">${I.akt} ${L('akt')}</button><button class="btn ghost" onclick="go('payments')">${I.payments} ${L('payments')}</button></div>
     </div>`;

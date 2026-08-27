@@ -360,15 +360,33 @@ def create_router(
             return
         user = await _get_user(message.from_user.id)
         phone = (user.phone_number if user else "") or ""
+
+        # Профиль — асосий манба: у олинмаса кабинетни кўрсатиб бўлмайди (хатолик чиқади).
         cab = await svc.get_cabinet(*creds, supplier_id, phone=phone)
-        bal = await svc.get_balance(*creds, supplier_id)
-        bon = await svc.get_bonuses(*creds, supplier_id)
-        shipments = await svc.get_shipments(*creds, supplier_id)
-        payments = await svc.get_payments(*creds, supplier_id)
-        returns = await svc.get_returns(*creds, supplier_id)
-        pending = (sum(1 for p in payments if p["status"] == "pending")
-                   + sum(1 for r in returns if r["status"] == "pending"))
-        confirmed_paid = sum(p["amount"] for p in payments if p["status"] == "confirmed")
+
+        # Қолган кўрсаткичлар — ёрдамчи: биттаси ишламаса ҳам кабинет очилаверади,
+        # ўша қатор «—» бўлиб, пастда қайси бўлим олинмагани ёзилади.
+        missing: list[str] = []
+
+        async def _part(coro, label_key: str):
+            try:
+                return await coro
+            except (ServiceUnavailable, SupplierError) as e:
+                logger.warning("cabinet: %s olinmadi (%s)", label_key, e)
+                missing.append(t(lang, label_key))
+                return None
+
+        bal = await _part(svc.get_balance(*creds, supplier_id), "btn_balance")
+        bon = await _part(svc.get_bonuses(*creds, supplier_id), "btn_bonuses")
+        shipments = await _part(svc.get_shipments(*creds, supplier_id), "btn_shipments")
+        payments = await _part(svc.get_payments(*creds, supplier_id), "btn_payments")
+        returns = await _part(svc.get_returns(*creds, supplier_id), "btn_returns")
+
+        NA = "—"
+        pending = ((sum(1 for p in payments if p["status"] == "pending") if payments else 0)
+                   + (sum(1 for r in returns if r["status"] == "pending") if returns else 0))
+        confirmed_paid = (sum(p["amount"] for p in payments if p["status"] == "confirmed")
+                          if payments is not None else None)  # bo'sh ro'yxat → 0, olinmagan → "—"
 
         lines = [
             t(lang, "cabinet_title"), "",
@@ -379,13 +397,19 @@ def create_router(
             f"▪️ <b>{t(lang, 'f_registered')}:</b> {cab['registered_at']}",
             "",
             f"<b>{t(lang, 'cab_summary')}</b>",
-            f"📦 {t(lang, 'cab_shipments')}: {len(shipments)} • {fmt_money(sum(s['total'] for s in shipments))}",
-            f"💰 {t(lang, 'cab_payments')}: {fmt_money(confirmed_paid)}",
-            f"🎁 {t(lang, 'bonus_remaining')}: {fmt_money(bon['remaining'])}",
-            f"{'🟢' if bal['balance'] >= 0 else '🔴'} {t(lang, 'balance_current')}: <b>{fmt_money(bal['balance'])}</b>",
+            (f"📦 {t(lang, 'cab_shipments')}: {len(shipments)} • {fmt_money(sum(s['total'] for s in shipments))}"
+             if shipments is not None else f"📦 {t(lang, 'cab_shipments')}: {NA}"),
+            (f"💰 {t(lang, 'cab_payments')}: {fmt_money(confirmed_paid)}"
+             if confirmed_paid is not None else f"💰 {t(lang, 'cab_payments')}: {NA}"),
+            (f"🎁 {t(lang, 'bonus_remaining')}: {fmt_money(bon['remaining'])}"
+             if bon else f"🎁 {t(lang, 'bonus_remaining')}: {NA}"),
+            (f"{'🟢' if bal['balance'] >= 0 else '🔴'} {t(lang, 'balance_current')}: <b>{fmt_money(bal['balance'])}</b>"
+             if bal else f"⚪️ {t(lang, 'balance_current')}: {NA}"),
         ]
         if pending:
             lines.append(f"⏳ {t(lang, 'cab_pending')}: {pending}")
+        if missing:
+            lines += ["", t(lang, "cab_partial", parts=", ".join(missing))]
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=t(lang, "btn_payments"), callback_data="payments_list"),
              InlineKeyboardButton(text=t(lang, "btn_returns"), callback_data="returns_list")],
