@@ -53,6 +53,21 @@ STATUS_ICON = {"pending": "⏳", "confirmed": "✅", "cancelled": "❌"}
 AKT_ROWS_LIMIT = 20  # botda ko'rsatiladigan qatorlar; to'lig'i PDF da
 
 
+def _totals_by_currency(rows: list[dict], key: str = "total") -> str:
+    """Aralash valyutali hujjatlar yig'indisi: «46 800 USD · 1 200 000 сўм».
+
+    Turli valyutadagi summalarni qo'shib bo'lmaydi — har biri alohida chiqadi.
+    """
+    acc: dict[str, float] = {}
+    for r in rows or []:
+        cur = (r.get("currency") or "UZS").upper()
+        acc[cur] = acc.get(cur, 0.0) + float(r.get(key) or 0)
+    if not acc:
+        return fmt_amount(0, "UZS")
+    order = sorted(acc, key=lambda c: (c != "UZS", c))
+    return " · ".join(fmt_amount(acc[c], c) for c in order)
+
+
 def _both(key: str) -> set[str]:
     """Tugma matni ikkala tilda ham ushlansin (til almashganda ham ishlaydi)."""
     return {t(lang, key) for lang in SUPPORTED_LANGS}
@@ -386,8 +401,6 @@ def create_router(
         NA = "—"
         pending = ((sum(1 for p in payments if p["status"] == "pending") if payments else 0)
                    + (sum(1 for r in returns if r["status"] == "pending") if returns else 0))
-        confirmed_paid = (sum(p["amount"] for p in payments if p["status"] == "confirmed")
-                          if payments is not None else None)  # bo'sh ro'yxat → 0, olinmagan → "—"
 
         lines = [
             t(lang, "cabinet_title"), "",
@@ -398,10 +411,10 @@ def create_router(
             f"▪️ <b>{t(lang, 'f_registered')}:</b> {cab['registered_at']}",
             "",
             f"<b>{t(lang, 'cab_summary')}</b>",
-            (f"📦 {t(lang, 'cab_shipments')}: {len(shipments)} • {fmt_money(sum(s['total'] for s in shipments))}"
+            (f"📦 {t(lang, 'cab_shipments')}: {len(shipments)} • {_totals_by_currency(shipments)}"
              if shipments is not None else f"📦 {t(lang, 'cab_shipments')}: {NA}"),
-            (f"💰 {t(lang, 'cab_payments')}: {fmt_money(confirmed_paid)}"
-             if confirmed_paid is not None else f"💰 {t(lang, 'cab_payments')}: {NA}"),
+            (f"💰 {t(lang, 'cab_payments')}: {_totals_by_currency([p for p in payments if p['status'] == 'confirmed'], 'amount')}"
+             if payments is not None else f"💰 {t(lang, 'cab_payments')}: {NA}"),
             (f"🎁 {t(lang, 'bonus_remaining')}: {fmt_money(bon['remaining'])}"
              if bon else f"🎁 {t(lang, 'bonus_remaining')}: {NA}"),
             (f"{'🟢' if bal['balance'] >= 0 else '🔴'} {t(lang, 'balance_current')}: "
@@ -431,14 +444,13 @@ def create_router(
         if not payments:
             lines.append(t(lang, "payments_empty"))
             return "\n".join(lines), None
-        total = sum(p["amount"] for p in payments)
         pending = [p for p in payments if p["status"] == "pending"]
-        lines.append(t(lang, "payments_total", total=fmt_money(total), count=len(payments)))
+        lines.append(t(lang, "payments_total", total=_totals_by_currency(payments, "amount"), count=len(payments)))
         if pending:
             lines.append(f"{STATUS_ICON['pending']} {t(lang, 'st_pending')}: {len(pending)}")
         lines += ["", t(lang, "payments_pick")]
         buttons = [[InlineKeyboardButton(
-            text=f"{STATUS_ICON[p['status']]} {fmt_date(p['date'])} — {fmt_money(p['amount'])}",
+            text=f"{STATUS_ICON[p['status']]} {fmt_date(p['date'])} — {fmt_amount(p['amount'], p['currency'])}",
             callback_data=f"pmt_{p['payment_id']}",
         )] for p in payments[:15]]
         return "\n".join(l for l in lines if l is not None), InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -448,7 +460,7 @@ def create_router(
             t(lang, "payment_detail_title"), "",
             f"▪️ <b>{t(lang, 'f_doc')}:</b> <code>{p['doc_number']}</code>",
             f"▪️ <b>{t(lang, 'f_date')}:</b> {fmt_date(p['date'])}",
-            f"▪️ <b>{t(lang, 'f_amount')}:</b> {fmt_money(p['amount'])}",
+            f"▪️ <b>{t(lang, 'f_amount')}:</b> {fmt_amount(p['amount'], p['currency'])}",
             f"▪️ <b>{t(lang, 'f_method')}:</b> {_method_label(lang, p['method'])}",
             f"▪️ <b>{t(lang, 'f_status')}:</b> {t(lang, 'st_' + p['status'])}",
         ]
@@ -526,11 +538,10 @@ def create_router(
         if not shipments:
             lines.append(t(lang, "shipments_empty"))
             return "\n".join(lines), None
-        total = sum(s["total"] for s in shipments)
-        lines.append(t(lang, "shipments_total", total=fmt_money(total), count=len(shipments)))
+        lines.append(t(lang, "shipments_total", total=_totals_by_currency(shipments), count=len(shipments)))
         lines += ["", t(lang, "shipments_pick")]
         buttons = [[InlineKeyboardButton(
-            text=f"📦 {fmt_date(s['date'])} • {s['doc_number']} — {fmt_money(s['total'])}",
+            text=f"📦 {fmt_date(s['date'])} • {s['doc_number']} — {fmt_amount(s['total'], s['currency'])}",
             callback_data=f"shp_{s['shipment_id']}",
         )] for s in shipments[:15]]
         return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -545,8 +556,8 @@ def create_router(
             lines.append(f"▪️ {s['warehouse']}")
         lines += ["", f"<b>{t(lang, 'products_header')}</b>"]
         for p in s["products"]:
-            lines.append(f"  • {p['name']} × {p['qty']} — {fmt_money(p['sum'])}")
-        lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_money(s['total'])}"]
+            lines.append(f"  • {p['name']} × {p['qty']} — {fmt_amount(p['sum'], p['currency'])}")
+        lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_amount(s['total'], s['currency'])}"]
         return "\n".join(lines)
 
     @router.message(F.text.in_(_both("btn_shipments")))
@@ -597,7 +608,7 @@ def create_router(
             lines.append(f"{STATUS_ICON['pending']} {t(lang, 'st_pending')}: {len(pending)}")
         lines += ["", t(lang, "returns_pick")]
         buttons = [[InlineKeyboardButton(
-            text=f"{STATUS_ICON[r['status']]} {fmt_date(r['date'])} • {r['doc_number']} — {fmt_money(r['total'])}",
+            text=f"{STATUS_ICON[r['status']]} {fmt_date(r['date'])} • {r['doc_number']} — {fmt_amount(r['total'], r['currency'])}",
             callback_data=f"ret_{r['return_id']}",
         )] for r in returns[:15]]
         return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -615,8 +626,8 @@ def create_router(
             lines.append(f"▪️ <b>{t(lang, 'f_reason')}:</b> {r['reason']}")
         lines += ["", f"<b>{t(lang, 'products_header')}</b>"]
         for p in r["products"]:
-            lines.append(f"  • {p['name']} × {p['qty']} — {fmt_money(p['sum'])}")
-        lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_money(r['total'])}"]
+            lines.append(f"  • {p['name']} × {p['qty']} — {fmt_amount(p['sum'], p['currency'])}")
+        lines += ["", f"💵 <b>{t(lang, 'f_total')}:</b> {fmt_amount(r['total'], r['currency'])}"]
         return "\n".join(lines)
 
     def _return_kb(lang: str, r: dict) -> InlineKeyboardMarkup:

@@ -54,7 +54,7 @@ EXPECTED_SHAPES: dict[str, Any] = {
                        "confirmed_at": "2026-08-20T12:05:00"},
     "getShipments": [{
         "shipment_id": 41001, "doc_number": "YT-2608-0011", "date": "2026-08-10",
-        "warehouse": "Марказий омбор", "total": 8200000,
+        "warehouse": "Марказий омбор", "total": 8200000, "cry": "UZS",
         "products": [{"product_id": 1001, "name": "Un oliy nav 50kg", "qty": 20,
                       "price": 285000, "sum": 5700000}],
     }],
@@ -355,7 +355,12 @@ PAYMENT_STATUSES = ("pending", "confirmed", "cancelled")
 RETURN_STATUSES = ("pending", "confirmed")
 
 
-def _map_product(p: dict) -> dict:
+def _doc_currency(d: dict, default: str = "UZS") -> str:
+    """Hujjat valyutasi. 1C ``cry`` deb yuboradi; ``currency`` ham qabul qilinadi."""
+    return (str(d.get("cry") or d.get("currency") or default)).upper()
+
+
+def _map_product(p: dict, currency: str = "UZS") -> dict:
     qty = _to_float(p.get("qty"), 1.0)
     price = _to_float(p.get("price"))
     return {
@@ -364,6 +369,8 @@ def _map_product(p: dict) -> dict:
         "qty": int(qty) if qty == int(qty) else qty,
         "price": price,
         "sum": _to_float(p.get("sum"), price * qty),
+        # tovar hujjat valyutasida hisoblanadi (har bir tovarda alohida emas)
+        "currency": _doc_currency(p, currency),
     }
 
 
@@ -375,6 +382,7 @@ def _map_payment(p: dict) -> dict:
         "date": _parse_date(p.get("date")) or _today(),
         "amount": _to_float(p.get("amount")),
         "method": str(p.get("method") or "other").lower(),
+        "currency": _doc_currency(p),
         "status": status if status in PAYMENT_STATUSES else "confirmed",
         "confirmed_at": _parse_dt(p.get("confirmed_at")),
         "note": str(p.get("note") or ""),
@@ -382,19 +390,22 @@ def _map_payment(p: dict) -> dict:
 
 
 def _map_shipment(s: dict) -> dict:
-    products = [_map_product(p) for p in (s.get("products") or []) if isinstance(p, dict)]
+    cur = _doc_currency(s)
+    products = [_map_product(p, cur) for p in (s.get("products") or []) if isinstance(p, dict)]
     return {
         "shipment_id": _to_int(s.get("shipment_id")),
         "doc_number": str(s.get("doc_number") or s.get("shipment_id") or ""),
         "date": _parse_date(s.get("date")) or _today(),
         "warehouse": str(s.get("warehouse") or ""),
+        "currency": cur,
         "products": products,
         "total": _to_float(s.get("total"), sum(p["sum"] for p in products)),
     }
 
 
 def _map_return(r: dict) -> dict:
-    products = [_map_product(p) for p in (r.get("products") or []) if isinstance(p, dict)]
+    cur = _doc_currency(r)
+    products = [_map_product(p, cur) for p in (r.get("products") or []) if isinstance(p, dict)]
     status = str(r.get("status") or "pending").lower()
     return {
         "return_id": _to_int(r.get("return_id")),
@@ -404,6 +415,7 @@ def _map_return(r: dict) -> dict:
         "confirmed_at": _parse_dt(r.get("confirmed_at")),
         "reason": str(r.get("reason") or ""),
         "reason_code": str(r.get("reason_code") or ""),
+        "currency": cur,
         "products": products,
         "total": _to_float(r.get("total"), sum(p["sum"] for p in products)),
     }

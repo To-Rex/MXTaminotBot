@@ -43,6 +43,16 @@ def _ser(obj: Any) -> Any:
     return obj
 
 
+def _totals(rows, key: str = "total") -> list[dict]:
+    """Valyutalar bo'yicha jamlangan summalar (aralash valyutani qo'shib bo'lmaydi)."""
+    acc: dict[str, float] = {}
+    for r in rows or []:
+        cur = (r.get("currency") or "UZS").upper()
+        acc[cur] = acc.get(cur, 0.0) + float(r.get(key) or 0)
+    order = sorted(acc, key=lambda c: (c != "UZS", c))
+    return [{"currency": c, "total": acc[c]} for c in order]
+
+
 def _creds(auth: dict) -> tuple:
     cfg = auth["bot_config"]
     return (cfg["base_url"], cfg["one_c_login"], cfg["one_c_password"])
@@ -206,8 +216,11 @@ async def get_cabinet(auth: dict = Depends(authenticate_webapp_user)):
         "bonus_remaining": bon["remaining"] if bon else None,
         "shipments_count": len(shipments) if shipments is not None else None,
         "shipments_total": sum(s["total"] for s in shipments) if shipments is not None else None,
+        "shipments_totals": _totals(shipments) if shipments is not None else None,
         "payments_confirmed_total": (sum(p["amount"] for p in payments if p["status"] == "confirmed")
                                      if payments is not None else None),
+        "payments_confirmed_totals": (_totals([p for p in payments if p["status"] == "confirmed"], "amount")
+                                      if payments is not None else None),
         "pending_payments": sum(1 for p in payments if p["status"] == "pending") if payments else 0,
         "pending_returns": sum(1 for r in returns if r["status"] == "pending") if returns else 0,
         "unavailable": unavailable,
@@ -226,10 +239,13 @@ async def get_balance(auth: dict = Depends(authenticate_webapp_user)):
 async def get_payments(auth: dict = Depends(authenticate_webapp_user)):
     supplier_id, lang = await _supplier_and_lang(auth)
     payments = await svc.get_payments(*_creds(auth), supplier_id)
+    confirmed = [p for p in payments if p["status"] == "confirmed"]
     return _ser({
         "payments": payments,
+        "totals": _totals(payments, "amount"),
+        "confirmed_totals": _totals(confirmed, "amount"),
         "total": sum(p["amount"] for p in payments),
-        "confirmed_total": sum(p["amount"] for p in payments if p["status"] == "confirmed"),
+        "confirmed_total": sum(p["amount"] for p in confirmed),
         "pending_count": sum(1 for p in payments if p["status"] == "pending"),
     })
 
@@ -252,7 +268,8 @@ async def get_shipments(auth: dict = Depends(authenticate_webapp_user)):
     shipments = await svc.get_shipments(*_creds(auth), supplier_id)
     return _ser({
         "shipments": shipments,
-        "total": sum(s["total"] for s in shipments),
+        "totals": _totals(shipments),
+        "total": sum(s["total"] for s in shipments),   # eski mijozlar uchun
         "count": len(shipments),
     })
 
@@ -264,6 +281,7 @@ async def get_returns(auth: dict = Depends(authenticate_webapp_user)):
     returns = await svc.get_returns(*_creds(auth), supplier_id)
     return _ser({
         "returns": returns,
+        "totals": _totals(returns),
         "total": sum(r["total"] for r in returns),
         "pending_count": sum(1 for r in returns if r["status"] == "pending"),
     })
