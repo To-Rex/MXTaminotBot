@@ -161,6 +161,11 @@ python app.py
 | `WEBAPP_URL` | *(bo'sh)* | WebApp tashqi manzili — **`https://<domen>`** bo'lsagina Telegram menyu tugmasi o'rnatiladi; bo'sh bo'lsa WebApp o'chiq |
 | `AUTH_API_BASE` | … | Panel login uchun tashqi auth API |
 | `SESSION_SECRET_KEY` | change me | Panel session imzosi |
+| `PDF_FONT` / `PDF_FONT_BOLD` | *(avto)* | Акт сверка PDF'и учун Unicode TTF шрифт йўли |
+
+> **Серверда PDF кирилл ҳарфларда чиқиши учун** Unicode шрифт керак:
+> `apt install fonts-dejavu-core` (Debian/Ubuntu) ёки `dnf install dejavu-sans-fonts` (RHEL).
+> Шрифт топилмаса PDF барибир тайёрланади — матн лотинга ўгирилади (хатолик бермайди).
 
 ## Extending
 

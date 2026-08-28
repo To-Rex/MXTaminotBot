@@ -5,6 +5,7 @@ fpdf2 bilan yaratiladi. Kirill matn uchun tizimdan Unicode TTF shrift qidiriladi
 standart Helvetica bilan chiqariladi — PDF hech qachon xato bermaydi.
 """
 import logging
+import os
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -13,15 +14,25 @@ from fpdf import FPDF
 
 logger = logging.getLogger(__name__)
 
+_ENV_FONT = os.getenv("PDF_FONT", "").strip()          # admin ko'rsatgan TTF (ixtiyoriy)
+_ENV_FONT_BOLD = os.getenv("PDF_FONT_BOLD", "").strip()
+
 _FONT_CANDIDATES = [
     # macOS
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/Library/Fonts/Arial.ttf",
-    # Linux
+    # Linux (server)
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    "/usr/share/fonts/gnu-free/FreeSans.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
     # Windows
     "C:/Windows/Fonts/arial.ttf",
 ]
@@ -30,7 +41,12 @@ _FONT_BOLD_CANDIDATES = [
     "/Library/Fonts/Arial Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
     "C:/Windows/Fonts/arialbd.ttf",
 ]
 
@@ -45,7 +61,20 @@ _CYR2LAT = str.maketrans({
     "П": "P", "Р": "R", "С": "S", "Т": "T", "У": "U", "Ф": "F", "Х": "X", "Ц": "Ts",
     "Ч": "Ch", "Ш": "Sh", "Щ": "Sch", "Ъ": "'", "Ы": "I", "Ь": "", "Э": "E",
     "Ю": "Yu", "Я": "Ya", "Қ": "Q", "Ғ": "G'", "Ў": "O'", "Ҳ": "H",
+    # tipografik belgilar — core shrift (latin-1) ularni qo'llab-quvvatlamaydi
+    "’": "'", "‘": "'", "“": '"', "”": '"', "„": '"', "«": '"', "»": '"',
+    "—": "-", "–": "-", "−": "-", "×": "x", "·": ".", "…": "...", "№": "N",
+    "\u00a0": " ", "\u2009": " ", "\u202f": " ", "≈": "~", "€": "EUR", "₽": "RUB",
 })
+
+
+def _latin1_safe(text: str) -> str:
+    """Core shrift faqat latin-1 ni biladi — qolgan belgilarni xavfsiz almashtiramiz.
+
+    Transliteratsiyadan keyin ham qolgan noyob belgilar (emoji va h.k.) PDF ni
+    buzmasligi uchun «?» ga aylantiriladi.
+    """
+    return text.encode("latin-1", "replace").decode("latin-1")
 
 
 def _find_font(candidates: list[str]) -> Optional[str]:
@@ -145,8 +174,8 @@ def build_akt_pdf(akt: dict, lang: str = "uz") -> bytes:
     pdf.set_margins(14, 12, 14)
     pdf.add_page()
 
-    regular = _find_font(_FONT_CANDIDATES)
-    bold = _find_font(_FONT_BOLD_CANDIDATES)
+    regular = _find_font([_ENV_FONT] + _FONT_CANDIDATES if _ENV_FONT else _FONT_CANDIDATES)
+    bold = _find_font(([_ENV_FONT_BOLD] if _ENV_FONT_BOLD else []) + _FONT_BOLD_CANDIDATES)
     if regular:
         pdf.add_font("Main", "", regular)
         pdf.add_font("Main", "B", bold or regular)
@@ -154,8 +183,14 @@ def build_akt_pdf(akt: dict, lang: str = "uz") -> bytes:
         tr = lambda s: str(s)  # noqa: E731
     else:
         font = "helvetica"
-        tr = lambda s: str(s).translate(_CYR2LAT)  # noqa: E731
-        logger.warning("PDF: unicode font not found, falling back to transliteration")
+        tr = lambda s: _latin1_safe(str(s).translate(_CYR2LAT))  # noqa: E731
+        logger.warning(
+            "PDF: Unicode TTF shrift topilmadi — matn lotinga o'girib chiqariladi. "
+            "Kirill ko'rinishi uchun serverga shrift o'rnating: "
+            "Debian/Ubuntu — `apt install fonts-dejavu-core`, "
+            "RHEL/Alma — `dnf install dejavu-sans-fonts`; "
+            "yoki .env da PDF_FONT=/path/to/font.ttf ko'rsating."
+        )
 
     PW = pdf.w - 28                    # foydali kenglik
     # ustunlar: sana · hujjat · izoh(nomi) · narx × miqдор · дебет · кредит
