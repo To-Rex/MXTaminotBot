@@ -15,6 +15,7 @@ Har bir so'rov va javob ``api_log`` ga yoziladi va admin paneldagi
 """
 import base64
 import logging
+import re
 import time
 from datetime import date, datetime, timezone
 from typing import Any, Optional
@@ -433,11 +434,35 @@ def _map_bonus_item(b: dict) -> dict:
     }
 
 
+# 1C izohi: «Авалон Кондиционер 32--7 344 000(UZS) Х 1» —
+# nomi -- narx(valyuta) Х miqdor. Ajratib olsak, chiroyli ko'rsatsa bo'ladi.
+_NOTE_RE = re.compile(
+    r"^\s*(?P<title>.+?)\s*--\s*(?P<price>[\d\s\u00a0.,]+)\((?P<cur>[A-Za-z]*)\)"
+    r"\s*[\u0425XxХх]\s*(?P<qty>[\d\s\u00a0.,]+)\s*$"
+)
+
+
+def _parse_akt_note(note: str) -> dict:
+    """Izohni tarkibiy qismlarga ajratadi. Mos kelmasa — faqat ``title``."""
+    m = _NOTE_RE.match(note or "")
+    if not m:
+        return {"title": (note or "").strip(), "price": "", "qty": "", "note_currency": ""}
+    norm = lambda v: " ".join(v.replace("\u00a0", " ").split())  # noqa: E731
+    return {
+        "title": m.group("title").strip(),
+        "price": norm(m.group("price")),
+        "qty": norm(m.group("qty")),
+        "note_currency": (m.group("cur") or "").upper(),
+    }
+
+
 def _map_akt_row(r: dict) -> dict:
+    note = str(r.get("note") or "")
     return {
         "date": _parse_date(r.get("date")) or _today(),
         "doc": str(r.get("doc") or ""),
-        "note": str(r.get("note") or ""),
+        "note": note,
+        **_parse_akt_note(note),
         "debit": _to_float(r.get("debit")),
         "credit": _to_float(r.get("credit")),
     }

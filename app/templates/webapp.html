@@ -668,7 +668,10 @@ async function renderAkt() {
     const pdfPath = `/akt-sverka/pdf?date_from=${d.date_from_iso}&date_to=${d.date_to_iso}&lang=${lng}${cq}`;
     $('viewAkt').innerHTML = `<h2 class="t">${L('akt')}</h2>${aktCurChips()}${aktChips()}
       <div class="stagger">
-      <div class="card"><div class="kv" style="padding-top:0"><span class="k">${L('period')}</span><span class="v num">${d.date_from} — ${d.date_to}</span></div>
+      <div class="card">
+        ${d.name ? `<div class="kv" style="padding-top:0"><span class="k">${L('name')}</span><span class="v">${esc(d.name)}</span></div>` : ''}
+        <div class="kv"><span class="k">${L('supplierId')}</span><span class="v num">${esc(d.supplier_id || '')}</span></div>
+        <div class="kv"><span class="k">${L('period')}</span><span class="v num">${d.date_from} — ${d.date_to}</span></div>
         ${d.cry_id ? `<div class="kv"><span class="k">${L('currency')}</span><span class="v">${esc(cur)}</span></div>` : ''}
         <div class="kv"><span class="k">${L('opening')}</span><span class="v">${amount(d.opening_balance, cur)}</span></div>
         <div class="kv"><span class="k">➕ ${L('debit')}</span><span class="v" style="color:var(--paid)">${amount(d.total_debit, cur)}</span></div>
@@ -677,7 +680,7 @@ async function renderAkt() {
       </div>
       ${d.rows.length ? `<div class="card"><div class="eyebrow" style="margin-bottom:8px">${L('moves')} · ${d.rows.length}</div><div class="tl">
         ${d.rows.map(r => `<div class="it ${r.debit ? 'plus' : 'minus'}"><span class="dot"></span>
-          <div class="d"><b class="num">${r.date} · ${esc(r.doc)}</b><small>${esc(r.note)}</small></div>
+          <div class="d"><b class="num">${r.date} · ${esc(r.doc)}</b><small>${esc(r.title || r.note)}${r.price ? ` · <span class="num">${esc(r.price)} × ${esc(r.qty)}</span>` : ''}</small></div>
           <span class="a">${r.debit ? '+' : '−'}${amount(r.debit || r.credit, cur)}</span></div>`).join('')}
       </div></div>` : note('info', L('emptyAkt'))}
       <button class="btn primary" id="pdfBtn" onclick="downloadPdf('${pdfPath}', '${(d.currency && d.cry_id) ? d.currency + '_' : ''}${d.date_from_iso}_${d.date_to_iso}')">${L('pdf')}</button>

@@ -840,31 +840,61 @@ def create_router(
         await callback.answer()
         await _show_akt_period_menu(callback.message, lang, int(cid), cname, True, edit=True)
 
+    AKT_SEP = "──────────────────────"
+    AKT_TEXT_LIMIT = 3600  # Telegram xabari 4096 belgidan oshmasin
+
+    def _akt_row_block(lang: str, r: dict, cur: str) -> str:
+        """Bitta harakat — ҳужжат, номи, нарх × миқдор ва сумма алоҳида."""
+        icon = "🟢" if r["debit"] else "🔴"
+        val = f"+{fmt_amount(r['debit'], cur)}" if r["debit"] else f"−{fmt_amount(r['credit'], cur)}"
+        title = r.get("title") or r.get("note") or ""
+        lines = [f"{icon} <code>{r['doc']}</code> · {title}" if r.get("doc") else f"{icon} {title}"]
+        if r.get("price"):
+            qty = r.get("qty") or "1"
+            lines.append(f"     {r['price']} × {qty}  →  <b>{val}</b>")
+        else:
+            lines.append(f"     <b>{val}</b>")
+        return "\n".join(lines)
+
     def _akt_text(lang: str, akt: dict) -> str:
         cur = akt.get("currency") or "UZS"
-        lines = [t(lang, "akt_title"), ""]
+        head = [t(lang, "akt_title"), ""]
+        if akt.get("name"):
+            head.append(f"👤 <b>{akt['name']}</b>")
+        if akt.get("supplier_id"):
+            head.append(f"🆔 {t(lang, 'f_supplier_id')}: <code>{akt['supplier_id']}</code>")
         if akt.get("cry_id"):
-            lines.append(f"💱 <b>{t(lang, 'akt_currency')}:</b> {cur}")
-        lines += [
-            f"📅 <b>{t(lang, 'akt_period')}:</b> {fmt_date(akt['date_from'])} — {fmt_date(akt['date_to'])}",
-            f"▪️ <b>{t(lang, 'akt_opening')}:</b> {fmt_amount(akt['opening_balance'], cur)}",
-            f"➕ <b>{t(lang, 'akt_debit')}:</b> {fmt_amount(akt['total_debit'], cur)}",
-            f"➖ <b>{t(lang, 'akt_credit')}:</b> {fmt_amount(akt['total_credit'], cur)}",
-            f"💳 <b>{t(lang, 'akt_closing')}:</b> {fmt_amount(akt['closing_balance'], cur)}",
+            head.append(f"💱 {t(lang, 'akt_currency')}: <b>{cur}</b>")
+        head += [
+            f"📅 {t(lang, 'akt_period')}: {fmt_date(akt['date_from'])} — {fmt_date(akt['date_to'])}",
+            AKT_SEP,
+            f"▪️ {t(lang, 'akt_opening')}: {fmt_amount(akt['opening_balance'], cur)}",
+            f"➕ {t(lang, 'akt_debit')}: {fmt_amount(akt['total_debit'], cur)}",
+            f"➖ {t(lang, 'akt_credit')}: {fmt_amount(akt['total_credit'], cur)}",
+            f"💳 <b>{t(lang, 'akt_closing')}: {fmt_amount(akt['closing_balance'], cur)}</b>",
+            AKT_SEP,
             "",
         ]
         rows = akt["rows"]
         if not rows:
-            lines.append(t(lang, "akt_empty"))
-        else:
-            lines.append(f"<b>{t(lang, 'akt_rows')}:</b>")
-            for r in rows[:AKT_ROWS_LIMIT]:
-                val = (f"+{fmt_amount(r['debit'], cur)}" if r["debit"]
-                       else f"−{fmt_amount(r['credit'], cur)}")
-                lines.append(f"• {fmt_date(r['date'])} • {r['doc']} • {r['note']} — <b>{val}</b>")
-            if len(rows) > AKT_ROWS_LIMIT:
-                lines.append(t(lang, "akt_more_rows", n=len(rows) - AKT_ROWS_LIMIT))
-        return "\n".join(lines)
+            return "\n".join(head + [t(lang, "akt_empty")])
+
+        head.append(f"<b>{t(lang, 'akt_rows')} ({len(rows)}):</b>")
+        body, shown, last_date = [], 0, None
+        for r in rows:
+            block = []
+            if r["date"] != last_date:                 # sana bo'yicha guruhlash
+                block.append(("" if last_date is None else "\n") + f"<b>📅 {fmt_date(r['date'])}</b>")
+                last_date = r["date"]
+            block.append(_akt_row_block(lang, r, cur))
+            candidate = "\n".join(body + block)
+            if shown >= AKT_ROWS_LIMIT or len("\n".join(head)) + len(candidate) > AKT_TEXT_LIMIT:
+                break
+            body = body + block
+            shown += 1
+        if shown < len(rows):
+            body += ["", t(lang, "akt_more_rows", n=len(rows) - shown)]
+        return "\n".join(head + body)
 
     def _akt_kb(lang: str, cid: int, cname: str, d1: date, d2: date) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(inline_keyboard=[

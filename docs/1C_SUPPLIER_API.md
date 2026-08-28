@@ -569,7 +569,7 @@ GET /hs/supplier_bot/api/getAktSverka?supplier_id=70123&date_from=2026-08-01&dat
 | `rows[]` | list | harakatlar, `date` bo'yicha **o'sish** tartibida |
 | `rows[].date` | date | harakat sanasi |
 | `rows[].doc` | string | hujjat raqami |
-| `rows[].note` | string | izoh («Юк берилди», «Тўлов», «Юк қайтарилди»…) |
+| `rows[].note` | string | izoh. 1C hozir `Номи--нарх(ВАЛЮТА) Х миқдор` shaklida yuboradi (masalan `Авалон Кондиционер 32--450(USD) Х 100`) — bot uni **ajratib**, hujjatda nomi, narxi va miqdorini alohida ustunlarda ko'rsatadi. Boshqa shaklda kelsa matn o'zgarishsiz chiqadi |
 | `rows[].debit` | money | debet (yuk berilishi); bo'lmasa `0` |
 | `rows[].credit` | money | kredit (to'lov/qaytarish); bo'lmasa `0` |
 
