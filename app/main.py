@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.config import HOST, LOG_LEVEL, PORT, SESSION_SECRET_KEY
+from app.config import HOST, LOG_LEVEL, PORT, SESSION_SECRET_KEY, WEBAPP_URL
 from app.database import async_session, engine
 from app.models import Base
 from app.services.bot_manager import BotManager
@@ -78,8 +78,31 @@ app.include_router(web_router)
 app.include_router(webapp_api_router)
 
 
+def _warn_if_wrong_host(request: Request) -> None:
+    """WEBAPP_URL shu ilovaning O'Z manziliga qarashi kerak.
+
+    Agar u boshqa loyihaning domeniga qaratilgan bo'lsa, bot menyusi o'sha
+    boshqa ilovani ochadi va u yerdagi bazada bu bot tokeni yo'q — natijada
+    foydalanuvchi «Invalid Telegram init data» xatosini oladi.
+    """
+    if not WEBAPP_URL:
+        return
+    from urllib.parse import urlparse
+    configured = (urlparse(WEBAPP_URL).hostname or "").lower()
+    actual = (request.url.hostname or "").lower()
+    if configured and actual and configured != actual and actual not in ("127.0.0.1", "localhost"):
+        logger.warning(
+            "WebApp DIQQAT: sahifa '%s' domenidan ochildi, .env dagi WEBAPP_URL esa '%s' ni ko'rsatyapti.\n"
+            "   Bot menyu tugmasi '%s' ni ochadi — agar u BOSHQA loyihaning manzili bo'lsa, "
+            "u yerdagi bazada bu botning tokeni yo'q va foydalanuvchi «Invalid Telegram init data» oladi.\n"
+            "   Yechim: .env da WEBAPP_URL ni SHU ilovaning o'z manziliga qo'ying (https://%s) va qayta ishga tushiring.",
+            actual, configured, configured, actual,
+        )
+
+
 @app.get("/webapp", response_class=HTMLResponse)
 async def webapp_page(request: Request):
+    _warn_if_wrong_host(request)
     env = request.app.state.jinja_env
     template = env.get_template("webapp.html")
     return HTMLResponse(template.render())

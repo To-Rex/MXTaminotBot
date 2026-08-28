@@ -15,38 +15,67 @@ from app.models import Bot, WebSession
 logger = logging.getLogger(__name__)
 
 
+def _init_data_fields(init_data: str) -> dict:
+    """initData ni maydonlarga ajratadi (bo'sh qiymatlar ham saqlanadi)."""
+    return {k: v[0] for k, v in urllib.parse.parse_qs(init_data, keep_blank_values=True).items()}
+
+
+def _hmac_hex(token: str, data_check_string: str) -> str:
+    secret = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+    return hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+
 def verify_telegram_init_data(init_data: str, bot_token: str) -> bool:
     """Telegram initData imzosini tekshirish (HMAC-SHA256).
 
-    ``keep_blank_values=True`` MUHIM: Telegram bo'sh qiymatli maydon ham
-    yuborishi mumkin (masalan ``start_param=``), u ham imzoga kiradi.
-    Bo'sh maydonlar tashlab yuborilsa hash mos kelmay, haqiqiy foydalanuvchi ham
-    "Invalid Telegram init data" xatosini olardi.
+    Ikkita variant sinaladi — Telegram mijozlari orasidagi farqlarga bardosh berish uchun:
+
+    1. ``hash`` dan tashqari **barcha** maydonlar (standart usul);
+    2. ``hash`` va ``signature`` dan tashqari — yangi mijozlar qo'shadigan
+       ``signature`` maydoni hash hisoblangandan **keyin** qo'shilgan bo'lsa.
+
+    Ikkalasi ham bot tokeni bilan imzolanadi, shuning uchun xavfsizlik pasaymaydi.
+    ``keep_blank_values=True`` muhim: ``start_param=`` kabi bo'sh maydonlar ham imzoga kiradi.
     """
-    parsed = urllib.parse.parse_qs(init_data, keep_blank_values=True)
-    hash_val = parsed.pop("hash", [None])[0]
-    if not hash_val:
-        return False
+    return bool(_matching_variant(init_data, bot_token))
 
-    data_check_arr = []
-    for key in sorted(parsed.keys()):
-        val = parsed[key][0]
-        data_check_arr.append(f"{key}={val}")
-    data_check_string = "\n".join(data_check_arr)
 
-    secret_key = hmac.new(
-        key=b"WebAppData",
-        msg=bot_token.encode(),
-        digestmod=hashlib.sha256,
-    ).digest()
+def _matching_variant(init_data: str, bot_token: str) -> Optional[str]:
+    """Mos kelgan variant nomi (yoki None) — diagnostika uchun."""
+    fields = _init_data_fields(init_data)
+    hash_val = fields.pop("hash", None)
+    if not hash_val or not bot_token:
+        return None
+    variants = {"standart": fields}
+    if "signature" in fields:
+        variants["signature'siz"] = {k: v for k, v in fields.items() if k != "signature"}
+    for name, data in variants.items():
+        dcs = "\n".join(f"{k}={data[k]}" for k in sorted(data))
+        if hmac.compare_digest(_hmac_hex(bot_token, dcs), hash_val):
+            return name
+    return None
 
-    computed_hash = hmac.new(
-        key=secret_key,
-        msg=data_check_string.encode(),
-        digestmod=hashlib.sha256,
-    ).hexdigest()
 
-    return computed_hash == hash_val
+def diagnose_init_data(init_data: str, bots: list) -> dict:
+    """Nega imzo mos kelmadi — server logi va /panel uchun tushunarli tavsif."""
+    fields = _init_data_fields(init_data)
+    info = {
+        "fields": sorted(fields),
+        "has_hash": "hash" in fields,
+        "has_signature": "signature" in fields,
+        "auth_date": fields.get("auth_date", ""),
+        "matched_bot_id": None,
+        "matched_variant": None,
+    }
+    for b in bots:
+        variant = _matching_variant(init_data, b.token or "")
+        if variant:
+            info["matched_bot_id"], info["matched_variant"] = b.id, variant
+            break
+    if info["auth_date"].isdigit():
+        age = int(datetime.now(timezone.utc).timestamp()) - int(info["auth_date"])
+        info["age_seconds"] = age
+    return info
 
 
 def _parse_init_user(init_data: str) -> Optional[dict]:
@@ -128,7 +157,25 @@ async def authenticate_webapp_user(
         bot = result.scalar_one_or_none()
 
     if not bot:
-        raise HTTPException(status_code=400, detail="Bot not found")
+        # Havoladagi bot_id bazada yo'q (eski havola, import'dan keyin ID o'zgargan
+        # va h.k.) — imzo qaysi bot tokeniga mos kelsa, o'shani ishlatamiz.
+        async with async_session() as session:
+            all_bots = (await session.execute(select(Bot))).scalars().all()
+        bot = next((b for b in all_bots if verify_telegram_init_data(x_init_data, b.token)), None)
+        if bot is None:
+            logger.warning("webapp auth: bot_id=%s bazada yo'q va imzo hech biriga mos kelmadi "
+                           "(%d ta bot tekshirildi)", bot_id, len(all_bots))
+            raise HTTPException(status_code=400, detail="Bot not found")
+        logger.warning("webapp auth: bot_id=%s bazada yo'q — imzo bo'yicha bot #%s topildi",
+                       bot_id, bot.id)
+        return {
+            "telegram_id": int((_parse_init_user(x_init_data) or {}).get("id", 0)),
+            "first_name": (_parse_init_user(x_init_data) or {}).get("first_name", ""),
+            "last_name": (_parse_init_user(x_init_data) or {}).get("last_name", ""),
+            "username": (_parse_init_user(x_init_data) or {}).get("username", ""),
+            "bot_id": bot.id,
+            "bot_config": _bot_payload(bot),
+        }
 
     if not verify_telegram_init_data(x_init_data, bot.token):
         # Havoladagi bot_id boshqa botniki bo'lishi mumkin (masalan menyu tugmasi
@@ -136,14 +183,20 @@ async def authenticate_webapp_user(
         # sinab ko'ramiz — imzo qaysi bot tokeni bilan mos kelsa, o'sha bot
         # konteksti ishlatiladi (imzo tekshiruvi baribir majburiy).
         async with async_session() as session:
-            others = (await session.execute(select(Bot).where(Bot.id != bot_id))).scalars().all()
-        match = next((b for b in others if verify_telegram_init_data(x_init_data, b.token)), None)
+            all_bots = (await session.execute(select(Bot))).scalars().all()
+        match = next((b for b in all_bots if b.id != bot_id and verify_telegram_init_data(x_init_data, b.token)), None)
         if match is None:
-            logger.warning(
-                "webapp auth: initData imzosi mos kelmadi (bot_id=%s, %d ta bot sinaldi, "
-                "initData uzunligi=%d, maydonlar=%s)",
-                bot_id, len(others) + 1, len(x_init_data),
-                ",".join(sorted(urllib.parse.parse_qs(x_init_data, keep_blank_values=True))),
+            d = diagnose_init_data(x_init_data, all_bots)
+            logger.error(
+                "webapp auth XATO: initData imzosi hech bir bot tokeniga mos kelmadi.\n"
+                "   havoladagi bot_id : %s (bazada %d ta bot: %s)\n"
+                "   initData maydonlari: %s\n"
+                "   hash bor: %s | signature bor: %s | auth_date: %s (%s soniya oldin)\n"
+                "   Sabab odatda: (1) shu bot uchun panelda BOSHQA token saqlangan — "
+                "panelda tokenni tekshiring; (2) WebApp boshqa botning menyu tugmasidan ochilgan.",
+                bot_id, len(all_bots), ", ".join(f"#{b.id} {b.name}" for b in all_bots),
+                ", ".join(d["fields"]), d["has_hash"], d["has_signature"],
+                d["auth_date"] or "—", d.get("age_seconds", "?"),
             )
             raise HTTPException(status_code=401, detail="Invalid Telegram init data")
         logger.warning("webapp auth: havolada bot_id=%s edi, imzo bot_id=%s ga mos keldi",
